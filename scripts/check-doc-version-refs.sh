@@ -151,16 +151,24 @@ def scan(root):
 
 
 def list_exempt(root):
-    """导出每个文件的豁免区间（可审阅的事实，不是白名单）。返回输出行列表。"""
+    """导出每个文件的豁免区间（可审阅的事实，不是白名单）。返回输出行列表。
+
+    必须走 md_files() 递归，不能 os.listdir() 只列顶层 —— 这是本脚本最难发现的一个 bug：
+    scan() 已经是递归的（所以门禁判定正确），但**审阅通道只列顶层**，于是
+    `--list-exempt` 会报告"docs/architecture/00-architecture.md 没有被豁免"，
+    而事实相反。**门禁没错、报告在说谎**，比两边都错更危险：做"豁免是否过宽"审计的人
+    会得到错误答案，并可能去改一个本来正确的机制。
+    更糟的是它曾经"自证通过"——因为自证的绿样本是平铺的（没有子目录），
+    递归写不写都能过。所以自证里补了一个嵌套样本，把这一维变成必红项。
+    """
     out = []
-    for name in sorted(os.listdir(root)):
-        if not name.endswith('.md'):
-            continue
-        rs = ranges_for_file(read(os.path.join(root, name)))
+    for p in md_files(root):
+        rel = os.path.relpath(p, root).replace(os.sep, '/')
+        rs = ranges_for_file(read(p))
         if not rs:
-            out.append('文件: docs/%s   （无豁免，全文视为正文）' % name)
+            out.append('文件: docs/%s   （无豁免，全文视为正文）' % rel)
             continue
-        out.append('文件: docs/%s' % name)
+        out.append('文件: docs/%s' % rel)
         for a, b, why in rs:
             out.append('  豁免 %d:%d  %s' % (a, b, why))
     out.append('正则: %s   （仅两段式算需求版本：命中串点数 != 1 的放过，那是发行 tag）' % PAT.pattern)
@@ -236,6 +244,13 @@ def self_test():
         os.makedirs(ok_dir)
         write_sample(ok_dir, 'ok.md', SAMPLE_OK)
 
+        # 嵌套一层子目录的绿样本。**这一份不是为了"更全"，是为了让"递归没写"变成必红**：
+        # 早先只有平铺样本时，md_files() 递归写不写都能过，于是 self_test 在"递归"这一维
+        # 给的是假保证（scan 递归了、list_exempt 没递归，自证 8 项全绿）。
+        nested_dir = os.path.join(ok_dir, 'architecture')
+        os.makedirs(nested_dir)
+        write_sample(nested_dir, 'nested.md', SAMPLE_OK)
+
         total, report = scan(ok_dir)
         check(total == 0 and not report,
               '正样本（版本号仅在文件头 + 变更记录）判绿：%d 处违规' % total)
@@ -289,6 +304,11 @@ def self_test():
         check(any('豁免' in l and '文件头' in l for l in listed),
               '--list-exempt 可导出正样本的豁免区间：%s'
               % (next((l.strip() for l in listed if '文件头' in l), '未导出')))
+
+        # 递归必须贯穿到审阅通道。判据是"输出的路径里出现子目录名"，不是"没有报错"。
+        check(any('architecture/nested.md' in l for l in listed),
+              '--list-exempt 递归到子目录（architecture/nested.md 出现在输出里）：%s'
+              % next((l.strip() for l in listed if 'nested.md' in l), '未出现'))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -300,7 +320,7 @@ def self_test():
         print('== 自证失败：%d 项不符合预期' % len(failed))
         return 1
 
-    print('== 自证通过：%d 项（正样本 4 项判绿、注入样本 3 项红在 %d 行、豁免导出 1 项可审）'
+    print('== 自证通过：%d 项（正样本 4 项判绿、注入样本 3 项红在 %d 行、豁免导出与递归 2 项可审）'
           % (len(checks), BAD_LINE))
     return 0
 
