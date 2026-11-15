@@ -519,9 +519,9 @@ PY
     ARCH_MOVED="$ARCHM"; ARCH_GONE="$ARCHG"; ARCH_GONE_FROM="$ARCHGF"; OOS="$OOSF"
     # v8 故意不给 --out-of-stock，让判据自己去 sitemap 里找；v8 的 sitemap 里找不到。
     [ "$mode" = "v8" ] && OOS=""
-    # nogf：站点完全正常，只是没给"历史 slug"这个 fixture —— 必须走 PRECONDITION，
+    # v11：站点完全正常，只是没给"历史 slug"这个 fixture —— 必须走 PRECONDITION，
     # 而不是"没传就跳过这条断言"。后者正是"缺 fixture 变假绿"的同一条通道。
-    [ "$mode" = "nogf" ] && ARCH_GONE_FROM=""
+    [ "$mode" = "v11" ] && ARCH_GONE_FROM=""
     # `< /dev/null` 不是可选项：清零时 stdin 正是下面那个 CASES heredoc，
     # 判据里任何一处 read 都会静默吃掉后面的用例（表现为"少跑几条还报绿"）。
     run_matrix > "$tmp/out.$mode" 2>&1 < /dev/null; rc=$?
@@ -564,10 +564,10 @@ v4|筛选第 2 页 canonical 指 ?page=2|S3
 v5|库存 0 的商品返 404|S10
 v6|归档无替代返 404（而非 410）|S9 归档+无替代 返回了 404
 v7|归档有替代返 200（而非 301）|S9 归档+有替代 未返回 301
+v8|缺 out-of-stock fixture（sitemap 里找不到 OutOfStock 商品）|PRECONDITION
 v9|归档 301 落点 404（Location 指向不存在的分类页）|S9 301 落点不可访问
 v10|归档商品的历史 slug 被 301 到新 slug（301→410 两跳）|S9 历史 slug 不得带 Location
-v8|缺 out-of-stock fixture（sitemap 里找不到 OutOfStock 商品）|PRECONDITION
-nogf|缺 --archived-gone-from（历史 slug fixture 未给）|PRECONDITION
+v11|缺 --archived-gone-from（历史 slug fixture 未给）|PRECONDITION
 CASES
   rm -rf "$tmp"
   [ "$sfail" -eq 0 ] && { echo "== 自证通过：正样本绿；${ninj} 个注入各自红在预期断言上"; return 0; }
