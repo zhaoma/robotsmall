@@ -8,6 +8,7 @@
 #   ./scripts/soak.sh --tier small --cold 300 --cold-restart   # 冷启动后立刻压 5 分钟（AC-12 最容易 OOM 的窗口）
 #   ./scripts/soak.sh --tier small --kernel-log skip           # 显式放弃内核日志源（会记 WARN，不是默认）
 #   ./scripts/soak.sh --tier small --seed-meta seed.out        # 把 seed-bench 的输出存进去，便于核对两轮是否同一批数据
+#   ./scripts/soak.sh --tier small --seed-meta seed.out --prev-meta prev.out   # 跨轮比对指纹，不同则报 INCOMPARABLE
 #   ./scripts/soak.sh --self-test          # 只验"判定逻辑能不能红"，不连站、不需要 docker
 #   ./scripts/soak.sh --self-test --verbose
 #
@@ -70,6 +71,7 @@ COLD=300            # 冷启动阶段时长（秒）。0 = 不跑。默认 300 =
 COLD_RESTART=0      # 1 = 冷启动阶段前真的 restart 容器（否则假定操作者刚起过站）
 KERNEL_MODE=auto    # auto = 采内核日志，采不到就 rc=2；require = 同上但更严；skip = 显式放弃（记 WARN）
 SEED_META=""        # seed-bench 的输出（key=value）。给了就把 fingerprint 写进 META：行数相同不代表同一批数据
+PREV_META=""        # 上一轮的 seed 输出。给了就跨轮比 fingerprint：不同则两轮结论不可横向比较
 ARGS=()
 
 while [ $# -gt 0 ]; do
@@ -93,6 +95,8 @@ while [ $# -gt 0 ]; do
     --kernel-log=*) KERNEL_MODE="${1#--kernel-log=}"; shift ;;
     --seed-meta)    SEED_META="${2:-}"; shift 2 ;;
     --seed-meta=*)  SEED_META="${1#--seed-meta=}"; shift ;;
+    --prev-meta)    PREV_META="${2:-}"; shift 2 ;;
+    --prev-meta=*)  PREV_META="${1#--prev-meta=}"; shift ;;
     --list)
       printf 'A1 采样点充足（否则 rc=2 未验证）\n'
       printf 'A2 请求量充足（否则 rc=2 未验证）\n'
@@ -479,6 +483,41 @@ seed_get() {  # $1 文件 $2 键 → stdout 值；取不到返回 1（不输出�
   printf '%s' "$v"
 }
 
+# =============================================================================
+# 跨轮可比性（`--prev-meta`）
+# -----------------------------------------------------------------------------
+# 为什么"--seed-meta 绑定了本轮指纹"还不够：它只解决"这一轮压的是什么"，
+# 不解决"这一轮能不能和上一轮比"。两轮各自都记录得很完整、指纹却不同的情况，
+# 报告上看不出任何异常——两个 META 各自都是绿的，RSS 斜率一涨就会被读成"泄漏"，
+# 而真实原因是中间换过数据集（重跑过 seed-bench、换过 tier、库被重建）。
+#
+# 所以必须在**看数字之前**把这句话说出来。三种答案，不许合并：
+#   yes 两轮指纹相同 → 可横向比较
+#   no  两轮指纹不同 → **不可横向比较**，先查数据集
+#   ?   未给 --prev-meta / 该文件缺 fingerprint → 未判定（不冒充"可比"）
+#
+# 为什么 no 不判非 0：它不否定本轮压测（本轮数据没问题），它否定的是"两轮之差"。
+# 用退出码挡掉本轮会让人去关掉这条判据；用一行显眼的 INCOMPARABLE 才不会。
+# =============================================================================
+prev_comparable() {  # $1 本轮 fingerprint $2 上一轮的 seed 输出 → yes|no|?
+  local cur="${1:-}" prevfile="${2:-}" prev
+  [ -n "$cur" ] || { printf '?'; return 0; }
+  [ -n "$prevfile" ] && [ -f "$prevfile" ] || { printf '?'; return 0; }
+  prev=$(seed_get "$prevfile" fingerprint 2>/dev/null) || { printf '?'; return 0; }
+  [ -n "$prev" ] || { printf '?'; return 0; }
+  if [ "$prev" = "$cur" ]; then printf 'yes'; else printf 'no'; fi
+}
+
+# 结论行。测试要断言"这句话真的会说出口"，所以文案单独成一个纯函数，
+# 而不是散在 case 分支里的 say —— 散着写就没法在自证里断言。
+comparable_verdict_line() {  # $1 yes|no|?
+  case "${1:-}" in
+    yes) printf '跨轮可比性：可比（两轮 fingerprint 相同）' ;;
+    no)  printf 'INCOMPARABLE：两轮压的不是同一批数据，RSS 斜率与延迟结论不可横向比较（先查数据集换没换，再怀疑代码退化）' ;;
+    *)   printf '跨轮可比性：未判定（未给 --prev-meta 或该文件缺 fingerprint）——不冒充"可比"' ;;
+  esac
+}
+
 # 把 seed-bench 的结论块读进 SM_*；0 = 可用或未给，2 = 给了但不可用（未验证）
 load_seed_meta() {
   SM_VERSION=""; SM_PRODUCTS=""; SM_VARIANTS=""; SM_PPC=""; SM_FP=""
@@ -596,6 +635,9 @@ main() {
       printf 'seed_products=%s seed_variants=%s seed_products_per_category=%s\n' "$SM_PRODUCTS" "$SM_VARIANTS" "$SM_PPC"
       printf 'seed_fingerprint=%s\n' "$SM_FP"
       printf 'seed_meta_file=%s\n' "$SEED_META"
+      # 跨轮可比性进 META：报告被单独转发时，这一行是唯一能阻止"两轮斜率相减"的东西
+      printf 'comparable=%s prev_meta_file=%s prev_fingerprint=%s\n' \
+        "$COMPARABLE" "${PREV_META:--}" "$( [ "$COMPARABLE" = "no" ] || [ "$COMPARABLE" = "yes" ] && seed_get "$PREV_META" fingerprint || printf '-' )"
     else
       # 空着比编一个强，但必须**写明为什么空**，否则后来人会当成"填了但没值"
       printf 'seed_version=? seed_products=? seed_variants=? seed_fingerprint=?\n'
@@ -604,6 +646,7 @@ main() {
     printf 'sitemap_urls=%s\n' "$(curl -s --max-time 10 "${BASE}/sitemap.xml" 2>/dev/null | grep -c '<loc>')"
   } > "$META" 2>&1
   say "   规格/数据量指纹：${META}"
+  say "   $(comparable_verdict_line "$COMPARABLE")"
 
   # ---- 对账：数出来的行数 vs 造数器声称的行数 ----
   # 这一步失败要**立刻**退，不能等到 30 分钟后按 A8 判 P95 —— 压的不是那批数据，
