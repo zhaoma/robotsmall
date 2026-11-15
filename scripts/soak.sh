@@ -421,18 +421,31 @@ self_test() {
     ( SEED_META="$1"; load_seed_meta >/dev/null 2>&1; rc=$?
       printf '%s|%s|%s|%s|%s' "$rc" "$SM_PRODUCTS" "$SM_VARIANTS" "$SM_PPC" "$SM_FP" )
   }
-  mk_seed() {  # $1 文件  $2 ppc 键名  $3 是否带 fingerprint（1/0）
+  # 这份样本严格照 SeedBenchCommand.PrintReport 的实际形状写（键名逐字、含中文与全角括号）。
+  # $4 = verdict 值，"-" 表示**故意不打这一行**（模拟旧版工具/只抄了一半）；
+  # $5/$6 = 两个质量计数（默认 0，健康的形状）。
+  mk_seed() {  # $1 文件 $2 ppc 键名 $3 是否带 fp(1/0) $4 verdict("-"=不打) $5 变体数错的数 $6 重复轴签名数
+    local f="$1" ppck="$2" hasfp="$3"
+    local vd="${4:-OK 造满了（行数 = 规格，每分类 = 规格）}"   # 空串也回落到默认：生成器不生产"半截样本"
+    local bv="${5:-0}" ba="${6:-0}"
     {
       printf '== seed-bench：小店档 ≤2,000 SKU ==\n'
       printf 'db=/tmp/a=b.db\ntier=small\nseed_version=1\nprotected_databases=2\n\n'
       printf '== 规格与数据量指纹（可直接贴进验收记录） ==\n'
       printf 'seed_version=1\ntier=small\nspec_products=2000\nspec_variants=10000\n'
-      printf 'spec_categories=12\n%s=166\n' "$2"
+      printf 'spec_categories=12\n%s=166\n' "$ppck"
       printf 'products=2000\nvariants=10000\nstatus_active=1900\nstatus_draft=100\n'
       printf 'inserted_products=2000\ninserted_variants=10000\nskipped_products=0\n'
-      [ "$3" = "1" ] && printf 'fingerprint=0123456789abcdef\n'
+      printf 'products_with_wrong_variant_count=%s\nduplicate_axis_signatures=%s\n' "$bv" "$ba"
+      printf 'category_check_scope=slug-segment（M0 无 ProductCategory 表；只证明列表数据量，不证明分类 join 成本）\n'
+      [ "$vd" = "-" ] || printf 'verdict=%s\n' "$vd"
+      [ "$hasfp" = "1" ] && printf 'fingerprint=0123456789abcdef\n'
       printf 'table_Product_rows=2000\ntable_Product_sha256=deadbeef\n'
-    } > "$1"
+    } > "$f"
+  }
+  probe_verdict() {  # $1 文件 → "rc|verdict|wrong_variant|dup_axis"
+    ( SEED_META="$1"; load_seed_meta >/dev/null 2>&1; rc=$?
+      printf '%s|%s|%s|%s' "$rc" "$SM_VERDICT" "$SM_BADVAR" "$SM_BADAXIS" )
   }
 
   mk_seed "$TMPD/m-good" spec_products_per_category 1
@@ -448,6 +461,34 @@ self_test() {
 
   ( SEED_META="$TMPD/不存在的文件"; load_seed_meta >/dev/null 2>&1 ) ; mt "seed-meta 文件不存在 → rc=2" "2" "$?"
   ( SEED_META=""; load_seed_meta >/dev/null 2>&1 ) ; mt "seed-meta 未给 → rc=0（不算错，META 里写明原因）" "0" "$?"
+
+  # ---- verdict：造数器自己已经判过了，不要替它再判一遍 ----
+  # 这一组的存在理由：**行数够不代表数据能用**。造数器会打印
+  # `verdict=OK 造满了（…）` / `verdict=FAILED 造不满：行数 != 规格…`，它是唯一知道
+  # "每分类有没有凑够"的组件。我们只看 fingerprint+products 就压，等于把它那句结论扔了。
+  mk_seed "$TMPD/m-vd-ok"     spec_products_per_category 1
+  mt "verdict=OK → 放行" "0|OK 造满了（行数 = 规格，每分类 = 规格）|0|0" "$(probe_verdict "$TMPD/m-vd-ok")"
+
+  mk_seed "$TMPD/m-vd-failed" spec_products_per_category 1 "FAILED 造不满：行数 != 规格，这份数据不能用来出压测报告"
+  mt "verdict=FAILED → rc=2（造数器自己说了不能用，别再压）" \
+     "2|FAILED 造不满：行数 != 规格，这份数据不能用来出压测报告|0|0" "$(probe_verdict "$TMPD/m-vd-failed")"
+
+  mk_seed "$TMPD/m-vd-none"   spec_products_per_category 1 "-"
+  mt "没有 verdict 行（旧版工具/只抄一半）→ rc=2" "2||0|0" "$(probe_verdict "$TMPD/m-vd-none")"
+
+  # ---- 质量计数：总数对、分布坏 ----
+  mk_seed "$TMPD/m-badvar"  spec_products_per_category 1 "" 7 0
+  mt "products_with_wrong_variant_count=7 → rc=2（变体数不对，join 成本全变）" "2|OK 造满了（行数 = 规格，每分类 = 规格）|7|0" "$(probe_verdict "$TMPD/m-badvar")"
+
+  mk_seed "$TMPD/m-badaxis" spec_products_per_category 1 "" 0 3
+  mt "duplicate_axis_signatures=3 → rc=2（唯一索引没生效，库本身有问题）" "2|OK 造满了（行数 = 规格，每分类 = 规格）|0|3" "$(probe_verdict "$TMPD/m-badaxis")"
+
+  # ---- 「每分类 500」的成立范围：原样抄，不许改写 ----
+  # 这条只证明列表数据量。META 里若把这句话压成 "每分类 500 ✅"，下游会读成
+  # "分类页指标已达标" —— 而分类页的 join 成本在 M0 根本没测到（没有 ProductCategory 表）。
+  mt "category_check_scope 原样取到（含中文/全角括号，不截断）" \
+     "slug-segment（M0 无 ProductCategory 表；只证明列表数据量，不证明分类 join 成本）" \
+     "$(seed_get "$TMPD/m-vd-ok" category_check_scope)"
 
   # ---- 跨轮可比性：两轮指纹不同必须**说出来**，不能让人自己比 ----
   # 这组防的是"两个 META 各自都完整、指纹却不同"：报告上没有任何异常，
@@ -496,6 +537,7 @@ self_test() {
 #   3) 值里可能含 `=`（`db=/tmp/a=b.db`），所以按**第一个** `=` 切，不能用 `$2` 了事。
 # =============================================================================
 SM_VERSION=""; SM_PRODUCTS=""; SM_VARIANTS=""; SM_PPC=""; SM_FP=""
+SM_VERDICT=""; SM_SCOPE=""; SM_BADVAR=""; SM_BADAXIS=""
 
 seed_get() {  # $1 文件 $2 键 → stdout 值；取不到返回 1（不输出空串冒充成功）
   local v
@@ -542,6 +584,7 @@ comparable_verdict_line() {  # $1 yes|no|?
 # 把 seed-bench 的结论块读进 SM_*；0 = 可用或未给，2 = 给了但不可用（未验证）
 load_seed_meta() {
   SM_VERSION=""; SM_PRODUCTS=""; SM_VARIANTS=""; SM_PPC=""; SM_FP=""
+  SM_VERDICT=""; SM_SCOPE=""; SM_BADVAR=""; SM_BADAXIS=""
   [ -n "$SEED_META" ] || return 0          # 没给不算错：META 里会写明"未给，两轮不可横向比较"
 
   if [ ! -f "$SEED_META" ]; then
@@ -555,6 +598,18 @@ load_seed_meta() {
   SM_VARIANTS=$(seed_get "$SEED_META" variants)                  || SM_VARIANTS=""
   SM_PPC=$(seed_get     "$SEED_META" spec_products_per_category) || SM_PPC=""
   SM_FP=$(seed_get      "$SEED_META" fingerprint)                || SM_FP=""
+  # verdict 是**造数器自己的结论**（`verdict=OK 造满了（…）` / `verdict=FAILED 造不满…`）。
+  # 不看它就等于我们替它重新判断一遍，而它已经判断过了 —— 还比我们多知道一件事：
+  # 行数可能凑够而每分类没凑够。所以它是第六个硬键。
+  SM_VERDICT=$(seed_get "$SEED_META" verdict)                    || SM_VERDICT=""
+  # 两个质量计数：总数对、分布坏的形态（每商品变体数不对 / 轴签名重复）。非零 = 这份数据
+  # 本身不合格，压出来的数字再漂亮也不代表 AC-12。**只在这两键存在时判**——
+  # 旧版工具不打印它们，缺键不该当成"数据坏了"。
+  SM_BADVAR=$(seed_get  "$SEED_META" products_with_wrong_variant_count) || SM_BADVAR=""
+  SM_BADAXIS=$(seed_get "$SEED_META" duplicate_axis_signatures)         || SM_BADAXIS=""
+  # 「每分类 500」的成立范围。原样抄进 META：否则下游会把"每分类 500 ✅"读成
+  # "分类页指标已达标"，而它只证明列表数据量（M0 没有 ProductCategory 表，测不到 join 成本）。
+  SM_SCOPE=$(seed_get   "$SEED_META" category_check_scope)              || SM_SCOPE=""
 
   # 五个键**一个都不许缺**。
   # 起初我只硬要求 fingerprint 与 products（"两根腿"），把其余三个记成 `?` —— 自证当场
@@ -568,10 +623,37 @@ load_seed_meta() {
   [ -n "$SM_VARIANTS" ] || miss="$miss variants"
   [ -n "$SM_PPC" ]      || miss="$miss spec_products_per_category"
   [ -n "$SM_FP" ]       || miss="$miss fingerprint"
+  [ -n "$SM_VERDICT" ]  || miss="$miss verdict"
   if [ -n "$miss" ]; then
     printf 'PRECONDITION: %s 里缺%s → 这不是 seed-bench 的完整结论块 → 未验证，不是通过\n' "$SEED_META" "$miss" >&2
     printf '  该文件应是 seed-bench 的完整 stdout（含 "== 规格与数据量指纹（可直接贴进验收记录） ==" 一节），五行缺一不可\n' >&2
     printf '  常见原因：stdout 只重定向了一半／手工只抄了 fp／造数用的是旧版 OpenStore.Tools（先 dotnet build tools/OpenStore.Tools -warnaserror）\n' >&2
+    return 2
+  fi
+
+  # 造数器已经给出了结论，照它的结论走 —— 不要"我看到行数够了所以应该没事"。
+  case "$SM_VERDICT" in
+    OK*) : ;;
+    *) printf 'PRECONDITION: seed-bench 自己判了这份数据不合格 → 未验证，不是通过\n' >&2
+       printf '  %s 里：verdict=%s\n' "$SEED_META" "$SM_VERDICT" >&2
+       printf '  行数/分布没造满的数据压出来的 TTFB 会偏乐观，拿它出 AC-12 报告等于自证清白。先修造数再看性能。\n' >&2
+       return 2 ;;
+  esac
+
+  # 两个质量计数非零 = 总数对但分布坏。同样不压。
+  #
+  # 这里刻意**不拼字符串**：第一版写的是 `bad="$bad；…"` 再用 `${bad#；}` 去掉前导分号，
+  # 在 bash 3.2 上直接炸 —— `badï: unbound variable`（`set -u` 下整个子壳退出，
+  # 输出全空，看起来像"探针什么都没返回"）。原因是参数展开里出现多字节字符时，
+  # bash 3.2 会把它当成变量名的一部分来切词。**商家的机器就是 3.2**，所以：
+  # 参数展开里只放 ASCII，中文一律放进 printf 的格式串。
+  local bad1="" bad2=""
+  [ -n "$SM_BADVAR" ]  && [ "$SM_BADVAR" != "0" ]  && bad1="yes"
+  [ -n "$SM_BADAXIS" ] && [ "$SM_BADAXIS" != "0" ] && bad2="yes"
+  if [ -n "$bad1$bad2" ]; then
+    printf 'PRECONDITION: %s 的数据质量计数非零 → 未验证，不是通过\n' "$SEED_META" >&2
+    [ -z "$bad1" ] || printf '  products_with_wrong_variant_count=%s（有商品的变体数不等于规格，索引与 join 的成本都变了）\n' "$SM_BADVAR" >&2
+    [ -z "$bad2" ] || printf '  duplicate_axis_signatures=%s（(ProductId,AxisSignature) 唯一索引没生效，这份库本身有问题）\n' "$SM_BADAXIS" >&2
     return 2
   fi
   return 0
@@ -660,13 +742,23 @@ main() {
       printf 'seed_version=%s\n' "$SM_VERSION"
       printf 'seed_products=%s seed_variants=%s seed_products_per_category=%s\n' "$SM_PRODUCTS" "$SM_VARIANTS" "$SM_PPC"
       printf 'seed_fingerprint=%s\n' "$SM_FP"
+      printf 'seed_verdict=%s\n' "$SM_VERDICT"
+      printf 'seed_quality=wrong_variant_count=%s duplicate_axis_signatures=%s\n' "${SM_BADVAR:-?}" "${SM_BADAXIS:-?}"
+      # 「每分类 500」只证明列表数据量。原样抄，不要改写 —— 下游读的是这句话本身。
+      if [ -n "$SM_SCOPE" ]; then
+        printf 'seed_category_check_scope=%s\n' "$SM_SCOPE"
+      else
+        # 同样不在参数展开里放中文（bash 3.2）。缺这个键时必须把"别过度解读"写出来，
+        # 否则下游会把"每分类 500 ✅"读成"分类页指标已达标"。
+        printf 'seed_category_check_scope=?（该版本 seed-bench 未打印此键：只证明列表数据量，不代表分类页指标已达标）\n'
+      fi
       printf 'seed_meta_file=%s\n' "$SEED_META"
       # 跨轮可比性进 META：报告被单独转发时，这一行是唯一能阻止"两轮斜率相减"的东西
       printf 'comparable=%s prev_meta_file=%s prev_fingerprint=%s\n' \
         "$COMPARABLE" "${PREV_META:--}" "$( [ "$COMPARABLE" = "no" ] || [ "$COMPARABLE" = "yes" ] && seed_get "$PREV_META" fingerprint || printf '-' )"
     else
       # 空着比编一个强，但必须**写明为什么空**，否则后来人会当成"填了但没值"
-      printf 'seed_version=? seed_products=? seed_variants=? seed_fingerprint=?\n'
+      printf 'seed_version=? seed_products=? seed_variants=? seed_fingerprint=? seed_verdict=?\n'
       printf 'seed_meta=未给 --seed-meta：本次结论无法与其它轮次横向比较（先怀疑数据集变了，再怀疑代码退化）\n'
     fi
     printf 'sitemap_urls=%s\n' "$(curl -s --max-time 10 "${BASE}/sitemap.xml" 2>/dev/null | grep -c '<loc>')"
