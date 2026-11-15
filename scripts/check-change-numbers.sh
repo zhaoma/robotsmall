@@ -38,6 +38,15 @@
 # 删行都误红，红几次之后这条判据就会被改松（这和 check-doc-version-refs.sh 里
 # "豁免推导错了只少扫一段"是同一类病）。
 #
+# ── 判据 3：每个编号空间内必须 **1..N 连续**（没有空洞）──────────────────────────────
+# 判据 1 是全仓总量，它只保证"整体没崩"：docs/03 少扫 30 条（38→8）总量仍 ≥ 下界，
+# 于是静默通过。而"每个文件各自取自己的上界"若写成常量表，就是一张会漂移、且必须
+# 每轮手工维护的数字表 —— 那正是本轮在清的那类东西。
+# 连续性是同一件事的**零维护**实现：某空间少扫一段 / 删掉一行 / 编号跳号，
+# 立刻出现空洞 → 红。它不需要知道任何文件的"应有条数"，因为上界就是该空间自己的条数。
+# 唯一代价：真的删/合并一条变更行时也会红一次。这是**有意的**——编号是永久记录，
+# 该条作废请在描述里标"已作废"并保留编号，而不是把号抽掉（抽掉会让所有 "见 #NN" 静默指错）。
+#
 # 用法:
 #   ./scripts/check-change-numbers.sh                # 扫 docs/**/*.md（递归）
 #   ./scripts/check-change-numbers.sh --min 85       # 显式指定下界（下界应只增）
@@ -130,6 +139,24 @@ def judge(spaces, floor):
             '若文档确实精简过，用 --min 下调下界并说明原因；若是正则/结构问题，先修扫描。'
             % (total, floor)))
 
+    # 判据 3：每个空间内 1..N 连续。先于判据 2 报告没有意义的多余错误会被抑制：
+    # 有重号时 nums 必然也不等于 1..N，这里跳过（一个病因只报一个码，否则读者要去猜哪个是真因）。
+    for sp in spaces:
+        nums = [n for n, _ in sp['rows']]
+        if len(set(nums)) != len(nums):
+            continue
+        need = list(range(1, len(nums) + 1))
+        if nums != need:
+            missing = sorted(set(need) - set(nums))
+            failures.append((
+                'NUMBER_GAP',
+                '%s:%d' % (sp['file'], sp['anchor_line']),
+                '编号空间起点 %s:%d 的编号不连续：%d 条编号最大值 %d，缺 %s。'
+                '少扫一段、删行或跳号都会长成这样。编号是永久记录：该条作废就在描述里标"已作废"'
+                '并保留编号，不要抽号（抽掉会让所有"见 #NN"静默指错）。'
+                % (sp['file'], sp['anchor_line'], len(nums), max(nums) if nums else 0,
+                   ', '.join('#%d' % n for n in missing[:10]) or '（无缺失但起始不是 1）')))
+
     # 判据 2：同一空间内唯一。跨空间同号是合法的（见文件头取证）。
     for s in spaces:
         counter = collections.Counter(n for n, _ in s['rows'])
@@ -201,6 +228,16 @@ SAMPLE_INVISIBLE = """| # | 变更 |
 """
 
 
+# 注入：编号 1,2,4 —— 缺 #3。模拟"某文件少扫一段"或"删掉一行变更记录"：
+# 总量看着还很正常（这里 3 条），只有连续性这一个信号能发现。
+SAMPLE_GAP = """> | # | 变更 |
+> |---|---|---|
+> | 1 | 甲 |
+> | 2 | 乙 |
+> | 4 | 丁（#3 被抽掉了） |
+"""
+
+
 def write_sample(root, name, text):
     path = os.path.join(root, name)
     io.open(path, 'w', encoding='utf-8').write(text)
@@ -251,6 +288,17 @@ def self_test():
               '表格形态被破坏（"> |" 变 "|"）→ 红在判据 1：扫到 %d 条 < 下界 85，判据未生效'
               % total3)
 
+        # ---- 方向四：编号出现空洞（少扫一段 / 删行）→ 必须红在判据 3 ----
+        # 这是判据 1 抓不到的那一类：总量仍然很大，只有"某个空间不连续"这一个信号。
+        gap_dir = os.path.join(tmp, 'gap')
+        os.makedirs(gap_dir)
+        write_sample(gap_dir, 'gap.md', SAMPLE_GAP)
+        fails4, total4 = judge(scan_spaces(gap_dir), floor=3)
+        codes4 = [c for c, _, _ in fails4]
+        check(codes4 == ['NUMBER_GAP'] and total4 == 3,
+              '注入编号空洞（1,2,4，缺 #3）→ 红在判据 3：%s'
+              % (fails4[0][2].split('。')[0] if fails4 else '未报红'))
+
         # 判据 1 的失败信息必须同时带"扫到多少"和"下界多少"，否则读者无法归因
         check(bool(fails3) and '扫到 0 条' in fails3[0][2] and '下界 85 条' in fails3[0][2],
               '判据 1 的失败信息同时打印扫到条数与下界：%s'
@@ -266,7 +314,7 @@ def self_test():
         print('== 自证失败：%d 项不符合预期' % len(failed))
         return 1
 
-    print('== 自证通过：%d 项（正样本 2 项判绿 / 注入重复红在判据 2 / 形态破坏红在判据 1 且信息可归因）'
+    print('== 自证通过：%d 项（正样本 2 项判绿 / 注入重复红在判据 2 / 形态破坏红在判据 1 / 编号空洞红在判据 3）'
           % len(checks))
     return 0
 
