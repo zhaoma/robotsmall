@@ -4,7 +4,7 @@
 #
 # 用法：
 #   ./scripts/check.sh            # 跑当前里程碑已实现的全部步骤
-#   ./scripts/check.sh --full     # 跑全部 17 步；未实现的步骤判红（不允许"未实现=通过"）
+#   ./scripts/check.sh --full     # 跑全部步骤（含未实现的，未实现即判红；步数以 --list 为准，本行不写数字）
 #   ./scripts/check.sh --fast     # 只跑 1~6 步（提交前用，目标 < 90 秒）
 #   ./scripts/check.sh --list     # 只列步骤，不执行
 #

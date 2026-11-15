@@ -2503,7 +2503,7 @@ components:
 
         不在本枚举内的前缀族 = **本轮没有对应端点**，不是"用不到"：`CART_*` `CHECKOUT_*` `PAYMENT_*`（含 `CANNOT_SELL`）
         `ORDER_*`（`ORDER_NOT_FOUND` 除外，查单需要）`REFUND_*` `THEME_*` `CONTENT_*` `IDEMPOTENCY_*` `WEBHOOK_*`
-        要等 M2/M3 的端点一起进契约 —— 契约里不出现的码，实现期也不许返回（否则前端映射表会静默走 default 分支）。
+        要等 M3/M4 的端点一起进契约 —— 契约里不出现的码，实现期也不许返回（否则前端映射表会静默走 default 分支）。
 
         **反方向不成立：在枚举内 ≠ 有端点。** 本枚举回答的是"**允许**返回哪些码"（前端 `code → i18n` 映射表的封闭集合），
         不是"有哪些路径"。两者是不同维度，混起来会得出两个都错的结论：
@@ -2560,7 +2560,7 @@ components:
         - INSUFFICIENT_STOCK
         - STOCK_CHANGED_RETRY
         - INVENTORY_NEGATIVE_FORBIDDEN
-        # --- Setup（路径随 M2 进契约，三个字面量先登记；PascalCase 逐字照抄需求原文，不要规范化）
+        # --- Setup（路径随 M5 进契约，三个字面量先登记；PascalCase 逐字照抄需求原文，不要规范化）
         - SetupAlreadyCompleted
         - SetupInProgress
         - SetupResetting
@@ -2739,17 +2739,20 @@ components:
       description: |
         限流（`429 RATE_LIMIT_EXCEEDED` + `Retry-After`）。
 
-        `details` 给**三个字段**，`scope` 与 `policy` 是**两个轴**，不是同义改写（`docs/03` §6.7）：
-        - `details.scope` ∈ `read` | `write` | `endpoint` —— **桶的层级**。前端据此决定提示口吻（方法级被限 = "访问过快"，
-          用户其实没做错什么；端点级被限 = 具体操作的提示）。只有这一层，前端做不出差异化文案。
-        - `details.policy` —— **命中的具体策略名**（`read`/`write`/`login`/`password-reset`/`checkout-confirm`/`order-lookup`/
-          `refresh-payment`/`webhook`/`admin-write`）。`scope=endpoint` 会把四种端点级策略糊成一个值，而它们的处置完全不同；
-          排障时"哪个桶满了"是第一个要回答的问题。
+        `details` 给**两个字段**（`docs/03` §6.7）：
+        - `details.scope` ∈ **`read` | `write` | `endpoint`**（三值封闭）—— **桶的层级**。前端据此决定提示口吻
+          （方法级被限 = "访问过快"，用户其实没做错什么；端点级被限 = 具体操作的提示）。
         - `details.retryAfterSeconds` —— 与响应头 `Retry-After` **同值**。前端要显示"X 秒后重试"时读头需要 CORS 暴露
           （`Access-Control-Expose-Headers`），admin 与站点一旦分域就读不到；**现在补成本为零，进契约后再改是 breaking change**。
 
-        **报的必须是"实际余量为 0 的那个桶"**：方法级与端点级是**串行 AND**（一次请求按序过它命中的每一个桶，
-        任一为 0 即 429）；若两个同时耗尽，报顺序上先判定的那个。**报错的桶 ≠ 真正卡住它的桶，会让排障方向整个偏掉。**
+        **`scope` 里不放策略名**：策略名是**配置键**（会漂），`scope` 是**对外契约**（不许漂）。把 `login`/`checkout-confirm`
+        这类名字写进响应后，"给限流策略改个配置名"就变成了破坏性变更。前端也不需要它 —— 它知道自己调的是哪个端点。
+        排障要的策略名进**结构化日志**（`ratelimit.reject` 事件的 `policy` 字段），**契约面与调试面分开**。
+
+        **两级都超时只报 `endpoint`，且只报一个**：方法级与端点级是**串行 AND**（一次请求按序过它命中的每一个桶，
+        任一为 0 即 429）。严格性排序 `endpoint > write > read` 是**按"这次请求被谁挡住"排**，不是按阈值大小排 ——
+        端点级策略存在的意义就是"比方法级更严的那道闸"。**按"哪个阈值先到"报是错的**：那会让 `scope` 依赖可配的数字。
+        两个值还会让"该等多久"没有唯一答案（两桶 `Retry-After` 不同）。
       headers:
         Retry-After: { schema: { type: integer, example: 30 }, description: 建议等待秒数（与 `details.retryAfterSeconds` 同值） }
       content:
@@ -2766,7 +2769,6 @@ components:
             errors: null
             details:
               scope: endpoint
-              policy: admin-write
               retryAfterSeconds: 30
 
     ServiceUnavailableProblem:
