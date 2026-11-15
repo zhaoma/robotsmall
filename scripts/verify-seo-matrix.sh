@@ -135,14 +135,14 @@ run_matrix(){
   load_robots || { echo "PRECONDITION: 取不到 $BASE/robots.txt" >&2; return 2; }
   parse_dis
 
-  local sm cat prod
+  local sm catpath prodpath
   sm=$(curl -fsS --max-time "$TIMEOUT" "$BASE/sitemap.xml") || { echo "PRECONDITION: 取不到 $BASE/sitemap.xml" >&2; return 2; }
   LOCS=$(printf '%s\n' "$sm" | grep -oE '<loc>[^<]+</loc>' | sed 's/<[^>]*>//g' | tr -d ' ')
-  cat=$(printf '%s\n' "$LOCS" | grep -E "/$LOCALE/c/[^?]+$" | head -1)
-  prod=$(printf '%s\n' "$LOCS" | grep -E "/$LOCALE/products/[^?]+$" | head -1)
-  cat="${cat#"$BASE"}"; prod="${prod#"$BASE"}"
-  [ -n "$cat" ]  || { echo "PRECONDITION: sitemap 里没有 /$LOCALE/c/ 分类页" >&2; return 2; }
-  [ -n "$prod" ] || { echo "PRECONDITION: sitemap 里没有 /$LOCALE/products/ 商品页" >&2; return 2; }
+  catpath=$(printf '%s\n' "$LOCS" | grep -E "/$LOCALE/c/[^?]+$" | head -1)
+  prodpath=$(printf '%s\n' "$LOCS" | grep -E "/$LOCALE/products/[^?]+$" | head -1)
+  catpath="${catpath#"$BASE"}"; prodpath="${prodpath#"$BASE"}"
+  [ -n "$catpath" ]  || { echo "PRECONDITION: sitemap 里没有 /$LOCALE/c/ 分类页" >&2; return 2; }
+  [ -n "$prodpath" ] || { echo "PRECONDITION: sitemap 里没有 /$LOCALE/products/ 商品页" >&2; return 2; }
 
   # ---- S1 私有页：noindex 存在、follow 未关闭
   echo "-- S1 私有页 noindex,follow"
@@ -162,7 +162,7 @@ run_matrix(){
       continue
     fi
     if [ "${P_STATUS:0:1}" != "2" ]; then
-      fail "S1 $p 站内链接不可达" "http=$P_STATUS（可达是 S1 的前提）"; continue
+      fail "S1 $p 站内链接不可达" "http=${P_STATUS}（可达是 S1 的前提）"; continue
     fi
     if [ "$P_NI" = "yes" ]; then pass "S1 $p 带 noindex"
     else fail "S1 $p 缺 noindex" "meta robots 与 X-Robots-Tag 都没命中 → 该私有页会被收录（a 类）"; fi
@@ -181,14 +181,14 @@ run_matrix(){
 
   # ---- S3 筛选/排序页（含带筛选的第 2 页）→ canonical 指向无参数第 1 页
   echo "-- S3 筛选页 canonical → 无参数第 1 页（含筛选×分页交集）"
-  probe_chain "$BASE$cat"
+  probe_chain "$BASE$catpath"
   local catcanon="$P_CAN" catbody="$P_BODY" f1 f2 facet
-  if [ -n "$catcanon" ]; then pass "S3 分类页第 1 页输出 canonical（基准=$catcanon）"
+  if [ -n "$catcanon" ]; then pass "S3 分类页第 1 页输出 canonical（基准=${catcanon}）"
   else fail "S3 分类页第 1 页无 canonical" "没有基准就无从判断归并目标"; fi
 
   facet=$(printf '%s' "$catbody" | grep -oiE 'href="[^"]*\?[^"]*f\.[^"]*"' | head -1 | cut -d'"' -f2)
   if [ -z "$facet" ]; then
-    echo "PRECONDITION: $cat 里找不到任何 f.* 筛选链接 —— fixture 需 ≥2 个 IsFilterable 属性（docs/01 §6 F4）" >&2
+    echo "PRECONDITION: $catpath 里找不到任何 f.* 筛选链接 —— fixture 需 ≥2 个 IsFilterable 属性（docs/01 §6 F4）" >&2
     return 2
   fi
   case "$facet" in http*) f1="$facet" ;; *) f1="$BASE$facet" ;; esac
@@ -204,28 +204,28 @@ run_matrix(){
   case "$f1" in *\?*) f2="$f1&page=2" ;; *) f2="$f1?page=2" ;; esac
   probe_chain "$f2"
   if [ -n "$catcanon" ] && same "$P_CAN" "$catcanon"; then pass "S3 筛选+第 2 页 canonical → 无参数第 1 页（交集规则）"
-  else fail "S3 筛选+第 2 页 canonical 指错" "实际=${P_CAN:-<空>} 期望=$catcanon（不得自指、也不得指向 ?page=2）url=$f2"; fi
+  else fail "S3 筛选+第 2 页 canonical 指错" "实际=${P_CAN:-<空>} 期望=${catcanon}（不得自指、也不得指向 ?page=2）url=$f2"; fi
   if [ "$P_NI" = "yes" ]; then fail "S3 筛选+第 2 页出现 noindex" "同属 b1 档，该收录"; else pass "S3 筛选+第 2 页无 noindex"; fi
   rec "$f2" "$P_NI" "$P_CAN"
 
   # ---- S4 无筛选的第 2 页起 canonical 自引用
   echo "-- S4 无筛选分页 canonical 自引用"
-  local p2="$BASE$cat?page=2"
+  local p2="$BASE$catpath?page=2"
   probe_chain "$p2"
   if same "$P_CAN" "$p2"; then pass "S4 无筛选第 2 页 canonical 自引用"
-  else fail "S4 无筛选第 2 页 canonical 不自指" "实际=${P_CAN:-<空>} 期望=$p2（指回第 1 页会与第 1 页的归并族不自洽）"; fi
+  else fail "S4 无筛选第 2 页 canonical 不自指" "实际=${P_CAN:-<空>} 期望=${p2}（指回第 1 页会与第 1 页的归并族不自洽）"; fi
   if [ "$P_NI" = "yes" ]; then fail "S4 无筛选第 2 页出现 noindex" "分页页该被收录"; else pass "S4 无筛选第 2 页无 noindex"; fi
   rec "$p2" "$P_NI" "$P_CAN"
 
   # ---- S5 商品详情页（含 utm）canonical 自引用
   echo "-- S5 商品页 canonical 自引用、剔除追踪参数"
-  probe_chain "$BASE$prod"
-  if [ -n "$P_CAN" ]; then pass "S5 商品页输出 canonical（$P_CAN）"
+  probe_chain "$BASE$prodpath"
+  if [ -n "$P_CAN" ]; then pass "S5 商品页输出 canonical（${P_CAN}）"
   else fail "S5 商品页无 canonical" "b3 档要求永远自引用；AC-10 也要求在原始 HTML 里能 grep 到"; fi
-  local pu="$BASE$prod?utm_source=news&utm_medium=email&utm_campaign=spring"
+  local pu="$BASE$prodpath?utm_source=news&utm_medium=email&utm_campaign=spring"
   probe_chain "$pu"
-  if same "$P_CAN" "$BASE$prod"; then pass "S5 带 utm 时 canonical 自引用且不含追踪参数"
-  else fail "S5 带 utm 的 canonical 不对" "实际=${P_CAN:-<空>} 期望=$BASE$prod（b3 永不做参数归并）"; fi
+  if same "$P_CAN" "$BASE${prodpath}"; then pass "S5 带 utm 时 canonical 自引用且不含追踪参数"
+  else fail "S5 带 utm 的 canonical 不对" "实际=${P_CAN:-<空>} 期望=$BASE${prodpath}（b3 永不做参数归并）"; fi
   rec "$pu" "$P_NI" "$P_CAN"
 
   # ---- S6 站内搜索：noindex,follow + 无 canonical + 不 Disallow
@@ -248,7 +248,7 @@ run_matrix(){
     [ -z "$d" ] && continue
     n=$((n+1))
     if printf '%s' "$d" | grep -qxE '/api/?'; then
-      pass "S7 Disallow $d（唯一合法项）"
+      pass "S7 Disallow ${d}（唯一合法项）"
     else
       fail "S7 Disallow $d 非法" "只允许 /api；前台路径一律不得 Disallow（docs/01 §6.1 S7）"
     fi
@@ -292,17 +292,17 @@ run_matrix(){
     pass "S9 归档+有替代 → 301"
     case "${P_LOC#"$BASE"}" in
       "/$LOCALE/c/"*) pass "S9 301 指向分类页（${P_LOC#"$BASE"}）" ;;
-      *) fail "S9 301 目标不是分类页" "Location=$P_LOC（应指向 /$LOCALE/c/…）" ;;
+      *) fail "S9 301 目标不是分类页" "Location=${P_LOC}（应指向 /$LOCALE/c/…）" ;;
     esac
   else
-    fail "S9 归档+有替代 未返回 301" "http=$P_STATUS url=$BASE$ARCH_MOVED（302 是临时跳转，301 才传递权重）"
+    fail "S9 归档+有替代 未返回 301" "http=$P_STATUS url=$BASE${ARCH_MOVED}（302 是临时跳转，301 才传递权重）"
   fi
   _probe_one "$BASE$ARCH_GONE"
   if [ "$P_STATUS" = "410" ]; then pass "S9 归档+无替代 → 410 Gone"
   elif [ "$P_STATUS" = "404" ]; then
     fail "S9 归档+无替代 返回了 404" "必须是 410：404 会被当成'可能回来'反复重试，410 才被更快移除"
   else
-    fail "S9 归档+无替代 状态码错" "http=$P_STATUS（期望 410）url=$BASE$ARCH_GONE"
+    fail "S9 归档+无替代 状态码错" "http=${P_STATUS}（期望 410）url=$BASE$ARCH_GONE"
   fi
 
   # ---- S10 在售但库存 0：200 + OutOfStock + 留在 sitemap；归档不在 sitemap
@@ -321,7 +321,7 @@ run_matrix(){
   fi
   _probe_one "$BASE$OOS"
   if [ "$P_STATUS" = "200" ]; then pass "S10 缺货商品页返回 200"
-  else fail "S10 缺货商品页状态码错" "http=$P_STATUS（缺货 ≠ 下架：404/410 会把还有货在卖的入口自己关掉）url=$BASE$OOS"; fi
+  else fail "S10 缺货商品页状态码错" "http=${P_STATUS}（缺货 ≠ 下架：404/410 会把还有货在卖的入口自己关掉）url=$BASE$OOS"; fi
   if printf '%s' "$P_BODY" | grep -qiE 'availability[^,}]{0,40}OutOfStock'; then pass "S10 结构化数据 availability=OutOfStock"
   else fail "S10 结构化数据未声明 OutOfStock" "缺了它搜索引擎把'缺货'当'有货'，用户点进去发现买不了"; fi
   if [ "$P_NI" = "yes" ]; then fail "S10 缺货商品页出现 noindex" "缺货商品还在卖、还有排名价值，必须允许收录"
@@ -335,8 +335,8 @@ run_matrix(){
   # ---- S11 /admin 的 X-Robots-Tag（c 档）
   echo "-- S11 /admin 的 X-Robots-Tag（c 档）"
   probe_chain "$BASE/admin/"
-  if [ "${P_STATUS:0:1}" = "2" ]; then pass "S11 /admin/ 可达（$P_STATUS）"
-  else fail "S11 /admin/ 不可达" "http=$P_STATUS（可达才能验头）"; fi
+  if [ "${P_STATUS:0:1}" = "2" ]; then pass "S11 /admin/ 可达（${P_STATUS}）"
+  else fail "S11 /admin/ 不可达" "http=${P_STATUS}（可达才能验头）"; fi
   if printf '%s\n' "$P_HDR" | grep -qiE '^x-robots-tag:.*noindex'; then
     pass "S11 /admin/ 带 X-Robots-Tag: noindex"
   else
@@ -383,7 +383,10 @@ def route(path, q):
             return 200, "text/plain", "User-agent: *\nDisallow: /api\nDisallow: /*?*\n", {}
         return 200, "text/plain", "User-agent: *\nDisallow: /api\n", {}
     if path == "/sitemap.xml":
-        urls = [CATP, PRODP, OOSP]                 # 归档的两个都不在 sitemap
+        # 归档的两个都不在 sitemap。
+        # v8：连缺货商品也摘掉 → 判据应当走 PRECONDITION 并返回 2。这条分支必须被自证覆盖：
+        # 文档承诺"退出码 2 = 未验证、不得静默放过"，但没人跑过 rc=2，那句话就只是承诺。
+        urls = [CATP, PRODP] if MODE == "v8" else [CATP, PRODP, OOSP]
         items = "".join("<url><loc>%s%s</loc></url>" % (BASE, u) for u in urls)
         return 200, "application/xml", '<?xml version="1.0" encoding="UTF-8"?><urlset>%s</urlset>' % items, {}
     if path.startswith("/admin"):
@@ -442,13 +445,10 @@ with socketserver.TCPServer(("127.0.0.1", PORT), H) as srv:
 PY
   echo "== fail-before-pass 自证（本地 mock，不连真站）"
   ARCHM="/zh/products/old-sku"; ARCHG="/zh/products/dead-sku"; OOSF="/zh/products/sold-out"
-  # 模式|注入内容|必须红在哪条断言
-  local cases="ok:正确样本:- v1:robots 加 Disallow:/*?*:S7 v2:给筛选页加 noindex:S3 v3:无筛选第2页 canonical 指第1页:S4 v4:筛选第2页 canonical 指 ?page=2:S3 v5:库存0 返 404:S10 v6:归档无替代返 404:S9 v7:归档有替代返 200:S9"
-  local c mode desc want port rc out pid i sfail=0 first
-  for c in $cases; do
-    mode=$(printf '%s' "$c" | cut -d: -f1)
-    desc=$(printf '%s' "$c" | cut -d: -f2)
-    want=$(printf '%s' "$c" | cut -d: -f3)
+  local mode desc want port rc out pid i sfail=0 ninj=0 first
+  # 用 heredoc 逐行读，不用空格分隔的字符串——描述里有空格会被 for 拆散
+  while IFS='|' read -r mode desc want; do
+    [ -z "$mode" ] && continue
     port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
     MODE="$mode" PORT="$port" python3 "$tmp/mock.py" >/dev/null 2>&1 &
     pid=$!
@@ -458,24 +458,48 @@ PY
     done
     BASE="http://127.0.0.1:${port}"
     ARCH_MOVED="$ARCHM"; ARCH_GONE="$ARCHG"; OOS="$OOSF"
-    run_matrix > "$tmp/out.$mode" 2>&1; rc=$?   # 重定向而非 $()：$() 是子 shell，计数器会丢
+    # v8 故意不给 --out-of-stock，让判据自己去 sitemap 里找；v8 的 sitemap 里找不到。
+    [ "$mode" = "v8" ] && OOS=""
+    # `< /dev/null` 不是可选项：清零时 stdin 正是下面那个 CASES heredoc，
+    # 判据里任何一处 read 都会静默吃掉后面的用例（表现为"少跑几条还报绿"）。
+    run_matrix > "$tmp/out.$mode" 2>&1 < /dev/null; rc=$?
     out=$(cat "$tmp/out.$mode")
     if [ "$mode" = "ok" ]; then
       if [ "$rc" -eq 0 ]; then echo "  ok    样本[ok] 绿（$OK passed,$BAD failed）"
-      else echo "  FAIL  样本[ok] 应为绿却红了（rc=$rc）"; printf '%s\n' "$out" | grep 'FAIL' | head -5; sfail=$((sfail+1)); fi
+      else echo "  FAIL  样本[ok] 应为绿却红了（rc=${rc}）"; printf '%s\n' "$out" | grep 'FAIL' | head -5; sfail=$((sfail+1)); fi
     else
+      ninj=$((ninj+1))
       first=$(printf '%s\n' "$out" | grep 'FAIL' | head -1 | sed 's/^  FAIL  //')
-      if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep 'FAIL' | grep -q "$want"; then
-        echo "  ok    注入[$mode] $desc → 红在 $want：$first"
+      if [ "$want" = "PRECONDITION" ]; then
+        # 缺 fixture 必须是 2，不是 0 也不是 1：0 会让人以为"验过了且通过"，1 会被当成"真失败"去看红字，
+        # 两者都错。只有 2 + 明确的 PRECONDITION 行才表示"这一档没验"。
+        if [ "$rc" -eq 2 ] && printf '%s\n' "$out" | grep -q '^PRECONDITION'; then
+          echo "  ok    注入[$mode] $desc → rc=2 且打印 PRECONDITION（未验证不被当成绿）"
+        else
+          echo "  FAIL  注入[$mode] $desc → 期望 rc=2 + PRECONDITION，实际 rc=${rc}，首条红：${first:-（无）}"
+          sfail=$((sfail+1))
+        fi
+      elif [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep 'FAIL' | grep -q "$want"; then
+        echo "  ok    注入[$mode] $desc → 红在 ${want}：$first"
       else
-        echo "  FAIL  注入[$mode] $desc → 期望红在 $want，实际 rc=$rc，首条红：${first:-（无）}"
+        echo "  FAIL  注入[$mode] $desc → 期望红在 ${want}，实际 rc=${rc}，首条红：${first:-（无）}"
         sfail=$((sfail+1))
       fi
     fi
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
-  done
+  done <<'CASES'
+ok|正确样本（六档全对）|-
+v1|robots 加 Disallow:/*?*|S7
+v2|给筛选页加 noindex|S3
+v3|无筛选第 2 页 canonical 指第 1 页|S4
+v4|筛选第 2 页 canonical 指 ?page=2|S3
+v5|库存 0 的商品返 404|S10
+v6|归档无替代返 404（而非 410）|S9
+v7|归档有替代返 200（而非 301）|S9
+v8|缺 out-of-stock fixture（sitemap 里找不到 OutOfStock 商品）|PRECONDITION
+CASES
   rm -rf "$tmp"
-  [ "$sfail" -eq 0 ] && { echo "== 自证通过：正样本绿；7 个注入各自红在预期断言上"; return 0; }
+  [ "$sfail" -eq 0 ] && { echo "== 自证通过：正样本绿；${ninj} 个注入各自红在预期断言上"; return 0; }
   echo "== 自证失败：$sfail 项不符合预期"; return 1
 }
 
