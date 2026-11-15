@@ -426,3 +426,15 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+## ---------------------------------------------------------------------------
+## OpenStore 前端（frontend/ 为独立 pnpm workspace）
+## ---------------------------------------------------------------------------
+# SvelteKit 的构建缓存与产物：内含绝对路径与哈希文件名，提交后每次构建都会产生噪声 diff
+frontend/**/.svelte-kit/
+frontend/**/build/
+frontend/**/dist/
+frontend/**/.vite/
+
+# macOS 目录元数据
+.DS_Store

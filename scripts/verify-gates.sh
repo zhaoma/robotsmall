@@ -8,6 +8,7 @@
 #   ./scripts/verify-gates.sh --list
 #
 # 退出码：0 全部注入都被拦住 / 1 至少一条门禁是摆设 / 2 用法或环境错误
+#         3 注入靶点已有未提交改动（基线不干净，拒绝开跑）
 #
 # -----------------------------------------------------------------------------
 # 为什么不用户手工维护的 .patch 文件
@@ -92,9 +93,31 @@ find_one() {
   return 1
 }
 
-# 备份 + 记录，供 trap 恢复
+# 备份 + 记录，供 trap 恢复。**并且在这里断言靶点洁净。**
+#
+# 把洁净断言放在 snapshot 里，是因为每条注入改文件前都必然先 snapshot ——
+# 放这儿等于零成本覆盖全部注入，不会漏，也不可能有人"新加一条注入忘了检查"。
+#
+# 为什么必须检查（M0 实测踩过）：恢复靠 trap，而 trap 对 SIGKILL / 被外层强行终止不生效。
+# 上一次运行被打断时靶点会留在改坏状态，于是下一轮 V1 往已经带 PackageReference 的 csproj
+# 再加一条 → NU1504 重复引用 → 构建失败 → 门禁"红了"但红在编译器上 → 判 WRONG-RED。
+# 而人看到 WRONG-RED 的第一反应是"锚点漂了，去改锚点"，真正的原因（树脏了）就被埋掉，
+# 还会顺手把一条本来正确的注入改坏。所以宁可在这里响亮地停住。
 snapshot() {
   local file="$1"
+  local st
+  if [ -d .git ]; then
+    st="$(git status --porcelain -- "$file" 2>/dev/null || true)"
+    if [ -n "$st" ]; then
+      say ""
+      say "== 前置检查失败：注入靶点有未提交改动 =="
+      say "  $st"
+      say "  注入必须从干净基线出发，否则残留会叠加，结果不可解释（见 snapshot 注释）。"
+      say "  确认这处改动是残留而非你在保留的修改，然后：git checkout -- $file"
+      exit 3
+    fi
+  fi
+
   local bak="$BAKDIR/$(printf '%s' "$file" | tr '/' '_')"
   cp -f "$file" "$bak"
   BACKUPS+=("$file|$bak")
@@ -153,7 +176,7 @@ run_injection() {
 
   if [ "$matched" -eq 0 ]; then
     printf 'WRONG-RED\n'
-    say "    门禁红了，但没红在预期断言上（期望包含其一：$expect）"
+    say "    门禁红了，但没红在预期断言上（期望包含其一：${expect}）"
     say "    实际输出前 10 行："
     head_of "$log" 10
     FAIL=$((FAIL+1)); FAILED+=("$id:$gate_name(wrong-red)")
@@ -224,9 +247,15 @@ fi
 
 # -----------------------------------------------------------------------------
 # V3  授权：删掉 admin 端点的 perm 策略
+#
+# 靶点必须是**确定的一个文件**，不能用 src/OpenStore.Api/Endpoints/Admin/*.cs 这种 glob：
+# find_one 取的是 `ls | head -1`，也就是字典序第一个。一旦新增一个 A 开头的 admin 端点文件，
+# 这条注入就静默换了对象——可能换到一个本来就没写 perm 的文件上，注入变成空转，
+# 而脚本看起来照样 ok。这种"覆盖面被无关改动悄悄挪走"的退化最难发现。
+# （M0 实测：新增 AdminAuth 端点目录后，glob 命中了 CategoryAdminEndpoints.cs。）
 # -----------------------------------------------------------------------------
 if [ -z "$ONLY" ] || [ "$ONLY" = "V3" ]; then
-  F=$(find_one "src/OpenStore.Api/Endpoints/Admin/*.cs")
+  F=$(find_one "src/OpenStore.Api/Endpoints/Admin/ProductAdminEndpoints.cs")
   if [ -n "$F" ] && require_anchor "$F" "RequireAuthorization\(Permissions\."; then
     snapshot "$F"
     python3 - "$F" <<'PY'
@@ -282,10 +311,21 @@ fi
 
 # -----------------------------------------------------------------------------
 # V6  主题：声明区块但不给 props schema（结构层合法 → 必须语义层抓）
+#
+# 注入的是"声明"而不是"实现"：往 $defs.blockKey.enum 加一个 countdown，
+# 但不给它 $defs.blocks 里的 props schema。这在结构上完全合法 —— 枚举里多一个值
+# 不违反任何 JSON Schema，所以拦它的必须是 check-themes 的同集性校验，而不是 schema 层。
+#
+# 这也是为什么 blocks.schema.json 里 blockKey 只受形态约束、不受枚举约束：
+# 一旦有人"顺手把枚举补全到 manifest schema 里"，这条注入会在结构层被 SCHEMA_INVALID
+# 拦掉，expect 匹配不到 BLOCK_PROPS_MISSING，V6 就从"验证语义校验"退化成"验证 JSON 形态"。
+#
+# 期望同时断言错误码与说明片段：只断言错误码的话，将来任何别的主题错误（比如 tokens 少个 default）
+# 也会让 V6 变红，看起来照样"通过"，覆盖却已经偏了。
 # -----------------------------------------------------------------------------
 if [ -z "$ONLY" ] || [ "$ONLY" = "V6" ]; then
-  F=$(find_one "themes/base/blocks.schema.json" "themes/base/editable.schema.json")
-  if [ -n "$F" ] && require_anchor "$F" 'blockKey|"enum"'; then
+  F=$(find_one "themes/base/blocks.schema.json")
+  if [ -n "$F" ] && require_anchor "$F" '"\$defs"|blockKey'; then
     snapshot "$F"
     python3 - "$F" <<'PY'
 import sys,re
@@ -293,9 +333,12 @@ p=sys.argv[1]
 s=open(p,encoding='utf-8').read()
 # 往第一个 enum 数组里追加 "countdown"，不定义其 props
 s2=re.sub(r'("enum"\s*:\s*\[)', r'\1"countdown",', s, count=1)
+if s2==s:
+    sys.stderr.write("V6 注入失败：blockKey.enum 锚点未命中\n")
+    sys.exit(1)
 open(p,'w',encoding='utf-8').write(s2)
 PY
-    run_injection V6 themes "BLOCK_PROPS_MISSING" g_tools check-themes
+    run_injection V6 themes "BLOCK_PROPS_MISSING|no props schema" g_tools check-themes
     restore_files
   fi
 fi

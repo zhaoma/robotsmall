@@ -40,7 +40,7 @@ static Command CreateCheckThemesCommand()
 
     var command = new Command(
         "check-themes",
-        "校验 themes/*：manifest schema、formatVersion、layouts 是否受宿主支持、blocks 是否在 editable.schema.json 声明、tokens 键集一致性");
+        "校验 themes/*：manifest schema、formatVersion、layouts 是否受宿主支持、每个可插入区块是否都有 props schema、token 键形态与默认值");
 
     command.Options.Add(rootOption);
     command.SetAction(parseResult => CheckThemesCommand.Run(parseResult.GetValue(rootOption)));

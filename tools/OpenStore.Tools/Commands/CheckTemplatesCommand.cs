@@ -584,22 +584,41 @@ internal static class CheckTemplatesCommand
                     ErrorCodes.TokenKeyMismatch,
                     relative,
                     JsonIo.Child("/defaults/themeTokens", entry.Key),
-                    $"theme token preset \"{entry.Key}\" is not editable in theme \"{themeId}\" (absent from themes/{themeId}/editable.schema.json properties)");
+                    $"theme token preset \"{entry.Key}\" is not editable in theme \"{themeId}\" (absent from that theme's tokensSchema properties)");
             }
         }
     }
 
-    /// <summary>静默读取主题可编辑 token 键集（模板命令不做主题侧诊断，避免两个命令重复报同一问题）。</summary>
+    /// <summary>
+    /// 静默读取主题可编辑 token 键集（模板命令不做主题侧诊断，避免两个命令重复报同一问题）。
+    ///
+    /// 文件名从 manifest 的 tokensSchema 解析，不硬编码：曾硬编码 "editable.schema.json"，
+    /// 而 check-themes 早就改成按 manifest 找 tokensSchema —— 两个命令用两套找法，
+    /// 一旦文件名变化，check-themes 正常校验、check-templates 静默跳过 themeTokens 预设校验，
+    /// 两边都不报错，于是这条校验消失得没人发现。
+    /// </summary>
     private static HashSet<string>? TryReadEditableTokenKeys(string themeDirectory)
     {
-        var path = Path.Combine(themeDirectory, "editable.schema.json");
-        if (!File.Exists(path))
+        var manifestPath = Path.Combine(themeDirectory, "theme.manifest.json");
+        if (!File.Exists(manifestPath))
         {
             return null;
         }
 
         try
         {
+            var manifestRelative = JsonNode.Parse(File.ReadAllText(manifestPath));
+            if (manifestRelative?.At("tokensSchema")?.Str() is not { } tokensSchemaRelative)
+            {
+                return null;
+            }
+
+            var path = Path.Combine(themeDirectory, tokensSchemaRelative);
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
             return JsonNode.Parse(File.ReadAllText(path))?.At("properties") is JsonObject properties
                 ? properties.Select(pair => pair.Key).ToHashSet(StringComparer.Ordinal)
                 : null;

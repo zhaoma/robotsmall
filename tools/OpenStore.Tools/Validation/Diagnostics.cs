@@ -11,10 +11,16 @@ internal static class ErrorCodes
     public const string AxisScopeInvalid = "AXIS_SCOPE_INVALID";
     public const string RefNotFound = "REF_NOT_FOUND";
     public const string ThemeNotFound = "THEME_NOT_FOUND";
-    public const string BlockNotDeclared = "BLOCK_NOT_DECLARED";
     public const string LayoutNotSupported = "LAYOUT_NOT_SUPPORTED";
     public const string TokenKeyMismatch = "TOKEN_KEY_MISMATCH";
     public const string FormatVersionUnsupported = "FORMAT_VERSION_UNSUPPORTED";
+
+    /// <summary>区块在 blockKey.enum 里声明了，但没有对应的 props schema。
+    /// 症状是"后台能插入区块、却无法配置任何东西"，商家会以为主题坏了。</summary>
+    public const string BlockPropsMissing = "BLOCK_PROPS_MISSING";
+
+    /// <summary>token 声明了但没有 default。商家看到的默认值与宿主预期不符，且无人会主动发现。</summary>
+    public const string TokenDefaultMissing = "TOKEN_DEFAULT_MISSING";
 }
 
 /// <summary>一条门禁诊断。File 相对于该资产集合的根（如 womenswear/template.json），Pointer 是 JSON Pointer。</summary>

@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openstore.dev/schema/theme.manifest.schema.json",
   "title": "OpenStore 主题包清单 (theme.manifest.json)",
-  "description": "主题只描述元数据，不含逻辑，可被 admin 的「主题列表」直接读。跨文件约束（blocks 是否在 editable.schema.json 声明、layouts 是否在宿主 LayoutKey 全集内、formatVersion 是否受支持）无法用 JSON Schema 表达，由 tools/OpenStore.Tools 的 check-themes 校验 —— 因此这里的 blockKey / layoutKey 只做形态约束，不枚举取值，否则非法值会在 schema 层就被拦掉、拿不到语义化错误码。",
+  "description": "主题只描述元数据，不含逻辑，可被 admin 的「主题列表」直接读。跨文件约束（区块是否都有 props schema、layouts 是否在宿主 LayoutKey 全集内、formatVersion 是否受支持）无法用 JSON Schema 表达，由 tools/OpenStore.Tools 的 check-themes 校验 —— 因此这里的 blockKey / layoutKey 只做形态约束，不枚举取值，否则非法值会在 schema 层就被拦掉、拿不到语义化错误码。",
   "type": "object",
-  "required": ["formatVersion", "id", "name", "version", "layouts", "blocks"],
+  "required": ["formatVersion", "id", "name", "version", "layouts", "tokensSchema"],
   "additionalProperties": false,
   "properties": {
     "formatVersion": {
@@ -45,21 +45,13 @@
       "type": "string",
       "description": "相对主题目录的 TS 入口，导出 ThemeDefinition。"
     },
-    "tokens": {
-      "type": "string",
-      "description": "token 默认值文件（相对路径）。"
-    },
-    "editableSchema": {
-      "type": "string",
-      "description": "可编辑白名单：JSON Schema，properties 为 token 键，$defs.blockKey.enum 为区块白名单。"
-    },
     "tokensSchema": {
       "type": "string",
-      "description": "单一真源形态（推荐）：此文件同时充当 token 默认值与可编辑白名单，存在时优先于 tokens/editableSchema 双文件。"
+      "description": "token 的唯一真源（必填）：JSON Schema，properties 既是可编辑 token 键集、也是默认值来源（每键必须有 default）、也是 admin 表单渲染源。不再有独立的 tokens.json / editable.schema.json —— 默认值与白名单分两文件时，商家看到的默认值会和实际渲染的默认值各自演化。"
     },
     "blocksSchema": {
       "type": "string",
-      "description": "区块 props 的 JSON Schema，admin 据此渲染区块参数表单。"
+      "description": "区块的唯一真源（可选）：JSON Schema，$defs.blockKey.enum 为可插入区块白名单，$defs.blocks 为每个区块的 props schema。声明了区块却没给 props schema 报 BLOCK_PROPS_MISSING。"
     },
     "layouts": {
       "type": "array",
@@ -68,23 +60,12 @@
       "description": "本主题实现的 LayoutKey 列表；缺某个 layout 时宿主回退到 base 的同名实现。取值必须在宿主 LayoutKey 全集内。",
       "items": { "$ref": "#/$defs/layoutKey" }
     },
-    "blocks": {
-      "type": "array",
-      "minItems": 1,
-      "uniqueItems": true,
-      "description": "本主题提供的首页区块。每一项都必须在同主题 editable.schema.json 的 $defs.blockKey.enum 里有声明。",
-      "items": { "$ref": "#/$defs/blockKey" }
-    },
     "preview": {
       "type": "string"
     }
   },
   "$defs": {
     "layoutKey": {
-      "type": "string",
-      "pattern": "^[a-z][a-zA-Z0-9]*$"
-    },
-    "blockKey": {
       "type": "string",
       "pattern": "^[a-z][a-zA-Z0-9]*$"
     }

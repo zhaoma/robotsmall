@@ -5,10 +5,21 @@ using Json.Schema;
 
 namespace OpenStore.Tools.Validation;
 
-/// <summary>可编辑白名单：token 键集 + 区块键集，来自同主题的 editable.schema.json（或单一真源的 tokens.schema.json）。</summary>
-internal sealed record Whitelist(IReadOnlyList<string> TokenKeys, IReadOnlyList<string> BlockKeys)
+/// <summary>
+/// token 白名单：tokens.schema.json 的 properties 键集（此文件同时是默认值来源与 admin 表单源）。
+/// </summary>
+internal sealed record TokenWhitelist(IReadOnlyList<string> TokenKeys)
 {
-    public static readonly Whitelist Empty = new(Array.Empty<string>(), Array.Empty<string>());
+    public static readonly TokenWhitelist Empty = new(Array.Empty<string>());
+}
+
+/// <summary>
+/// 区块白名单：blocks.schema.json 的 $defs.blockKey.enum（哪些区块能插入）
+/// 与 $defs.blocks 的键集（哪些区块有 props 可配）。两者必须同集，由 check-themes 校验。
+/// </summary>
+internal sealed record BlockWhitelist(IReadOnlyList<string> BlockKeys, IReadOnlySet<string> KeysWithProps)
+{
+    public static readonly BlockWhitelist Empty = new(Array.Empty<string>(), new HashSet<string>(StringComparer.Ordinal));
 }
 
 /// <summary>
@@ -23,18 +34,19 @@ internal static partial class ThemeAssets
     public static bool IsWellFormedTokenKey(string key) => TokenKeyRegex().IsMatch(key);
 
     /// <summary>
-    /// editable.schema.json 既是 token 值的校验器，也是白名单声明处：
-    ///   properties 的键 = 可编辑 token 键集；
-    ///   $defs.blockKey.enum = 首页区块白名单（兼容旧的 x-blocks 注解）。
+    /// tokens.schema.json 既是 token 值的校验器，也是可编辑白名单声明处：properties 的键 = 可编辑 token 键集。
+    /// 区块白名单不在这里 —— 它属于 blocks.schema.json（见 ReadBlockWhitelist）。
+    /// 曾把两者塞进同一个 editable.schema.json，结果"哪个文件是白名单真源"在 manifest、check-themes、
+    /// admin 表单三处各有一份答案；现在一个文件只管一件事。
     /// </summary>
-    public static Whitelist ReadWhitelist(string fullPath, string relativePath, CheckRun run)
-        => ReadWhitelist(JsonIo.TryLoad(fullPath, relativePath, run), relativePath, run);
+    public static TokenWhitelist ReadTokenWhitelist(string fullPath, string relativePath, CheckRun run)
+        => ReadTokenWhitelist(JsonIo.TryLoad(fullPath, relativePath, run), relativePath, run);
 
-    public static Whitelist ReadWhitelist(JsonNode? node, string relativePath, CheckRun run)
+    public static TokenWhitelist ReadTokenWhitelist(JsonNode? node, string relativePath, CheckRun run)
     {
         if (node is not JsonObject)
         {
-            return Whitelist.Empty;
+            return TokenWhitelist.Empty;
         }
 
         var tokenKeys = node["properties"] is JsonObject properties
@@ -46,41 +58,45 @@ internal static partial class ThemeAssets
             run.Add(ErrorCodes.TokenKeyMismatch, relativePath, "/properties", "no token keys declared (properties is empty)");
         }
 
-        List<string> blockKeys;
-        if (node.At("$defs")?.At("blockKey")?.At("enum") is JsonArray declared)
+        return new TokenWhitelist(tokenKeys);
+    }
+
+    /// <summary>
+    /// blocks.schema.json：$defs.blockKey.enum 为可插入区块白名单，$defs.blocks 为每个区块的 props schema。
+    /// 这里只取两个键集，同集性由调用方报 BLOCK_PROPS_MISSING（需要精确到缺失的区块名，不适合在取数层报）。
+    /// </summary>
+    public static BlockWhitelist ReadBlockWhitelist(string fullPath, string relativePath, CheckRun run)
+        => ReadBlockWhitelist(JsonIo.TryLoad(fullPath, relativePath, run), relativePath, run);
+
+    public static BlockWhitelist ReadBlockWhitelist(JsonNode? node, string relativePath, CheckRun run)
+    {
+        if (node is not JsonObject)
         {
-            blockKeys = declared.Strings().ToList();
+            return BlockWhitelist.Empty;
         }
-        else if (node.At("x-blocks") is JsonArray legacy)
+
+        if (node.At("$defs")?.At("blockKey")?.At("enum") is not JsonArray declared)
         {
-            blockKeys = legacy.Strings().ToList();
-        }
-        else
-        {
-            blockKeys = new List<string>();
             run.Add(
                 ErrorCodes.SchemaInvalid,
                 relativePath,
                 "/$defs/blockKey",
                 "block whitelist not declared (expected $defs.blockKey.enum)");
+            return BlockWhitelist.Empty;
         }
 
-        return new Whitelist(tokenKeys, blockKeys);
+        var keysWithProps = node.At("$defs")?.At("blocks") is JsonObject blocks
+            ? blocks.Select(pair => pair.Key).ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+
+        return new BlockWhitelist(declared.Strings().ToList(), keysWithProps);
     }
 
-    /// <summary>tokens.json：扁平点分键 → 值。</summary>
-    public static List<KeyValuePair<string, JsonNode?>> ReadTokenFile(string fullPath, string relativePath, CheckRun run)
-    {
-        var node = JsonIo.TryLoad(fullPath, relativePath, run);
-        if (node is not JsonObject obj)
-        {
-            return new List<KeyValuePair<string, JsonNode?>>();
-        }
-
-        return obj.Select(pair => new KeyValuePair<string, JsonNode?>(pair.Key, pair.Value)).ToList();
-    }
-
-    /// <summary>单一真源形态（tokens.schema.json）：默认值取 properties[key].default。</summary>
+    /// <summary>
+    /// token 默认值来源：tokens.schema.json 的 properties[key].default。
+    /// 缺 default 单独报 TOKEN_DEFAULT_MISSING：它不是"schema 写错了"（schema 本体合法），
+    /// 而是"这个 token 没有默认值"，后果是商家新建主题时该 token 空着、渲染出未定义 CSS 变量。
+    /// </summary>
     public static List<KeyValuePair<string, JsonNode?>> ReadDefaultsFromSchema(string fullPath, string relativePath, CheckRun run)
     {
         var node = JsonIo.TryLoad(fullPath, relativePath, run);
@@ -96,10 +112,10 @@ internal static partial class ThemeAssets
             if (defaultValue is null)
             {
                 run.Add(
-                    ErrorCodes.SchemaInvalid,
+                    ErrorCodes.TokenDefaultMissing,
                     relativePath,
                     JsonIo.Child("/properties", pair.Key),
-                    "token has no default value (single-source mode derives defaults from schema)");
+                    "token has no default value (defaults are derived from the schema, so a missing default means the token renders as an undefined CSS variable)");
                 continue;
             }
 
