@@ -449,6 +449,27 @@ self_test() {
   ( SEED_META="$TMPD/不存在的文件"; load_seed_meta >/dev/null 2>&1 ) ; mt "seed-meta 文件不存在 → rc=2" "2" "$?"
   ( SEED_META=""; load_seed_meta >/dev/null 2>&1 ) ; mt "seed-meta 未给 → rc=0（不算错，META 里写明原因）" "0" "$?"
 
+  # ---- 跨轮可比性：两轮指纹不同必须**说出来**，不能让人自己比 ----
+  # 这组防的是"两个 META 各自都完整、指纹却不同"：报告上没有任何异常，
+  # 而 RSS 斜率一涨就会被读成泄漏，真实原因是中间换过数据集。
+  mk_seed "$TMPD/m-prev-same" spec_products_per_category 1     # fingerprint=0123456789abcdef
+  sed 's/^fingerprint=0123456789abcdef$/fingerprint=fedcba9876543210/' \
+    "$TMPD/m-prev-same" > "$TMPD/m-prev-diff"
+  mt "跨轮指纹相同 → 可比" "yes" "$(prev_comparable 0123456789abcdef "$TMPD/m-prev-same")"
+  mt "跨轮指纹不同 → 不可比（不是\"看着差不多就行\"）" "no" "$(prev_comparable 0123456789abcdef "$TMPD/m-prev-diff")"
+  mt "未给 --prev-meta → 未判定（不冒充\"可比\"）" "?" "$(prev_comparable 0123456789abcdef "")"
+  mt "上一轮文件缺 fingerprint → 未判定" "?" "$(prev_comparable 0123456789abcdef "$TMPD/m-nofp")"
+  mt "上一轮文件不存在 → 未判定" "?" "$(prev_comparable 0123456789abcdef "$TMPD/not-exist")"
+  mt "本轮没有 fingerprint（没给 --seed-meta）→ 未判定" "?" "$(prev_comparable "" "$TMPD/m-prev-same")"
+
+  # 光算出 no 不够：**这句话必须真的会说出口**。所以断言文案本身，
+  # 而不是只断言状态码——"判成了 no 但没说"与"判成了 no 并说清楚"对读报告的人是两回事。
+  has() { case "$1" in *"$2"*) printf 'yes' ;; *) printf 'no' ;; esac; }
+  LINE_NO="$(comparable_verdict_line no)"; LINE_YES="$(comparable_verdict_line yes)"
+  mt "不可比文案含 INCOMPARABLE" "yes" "$(has "$LINE_NO" INCOMPARABLE)"
+  mt "不可比文案说清「不可横向比较」（只写 INCOMPARABLE 等于让人去查字典）" "yes" "$(has "$LINE_NO" 不可横向比较)"
+  mt "可比文案不出现 INCOMPARABLE（否则每次都喊狼来了）" "no" "$(has "$LINE_YES" INCOMPARABLE)"
+
   say ""
   if [ "$failn" -eq 0 ]; then
     say "== 自证通过：${total} 个样本，正确样本绿、每种坏情况各自红在预期断言上 =="
@@ -610,6 +631,11 @@ main() {
   # 顺序是有讲究的：这一步必须在 30 分钟压测**之前**做完。压完才发现"记了个空的
   # fingerprint"，等于把半小时加一次真机窗口一起扔掉，而人只会看到一行空格子。
   load_seed_meta || exit 2
+
+  # 跨轮可比性：解析出本轮指纹之后立刻算，因为它的结论要**和本轮数字一起**出现在屏幕上。
+  # 放到压完之后再算，等于让人先看完 30 分钟的曲线，才被告知"这两轮不能比"。
+  local COMPARABLE
+  COMPARABLE=$(prev_comparable "$SM_FP" "$PREV_META")
 
   # 压测库里**数出来**的行数。它与 seed-bench 声称的 products 是两回事：
   # 前者是"我现在压的东西"，后者是"造数器以为我压的东西"。两者不等 = 压错库。

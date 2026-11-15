@@ -4,7 +4,7 @@
 #
 # 用法：
 #   ./scripts/check.sh            # 跑当前里程碑已实现的全部步骤
-#   ./scripts/check.sh --full     # 跑全部 15 步；未实现的步骤判红（不允许"未实现=通过"）
+#   ./scripts/check.sh --full     # 跑全部 17 步；未实现的步骤判红（不允许"未实现=通过"）
 #   ./scripts/check.sh --fast     # 只跑 1~6 步（提交前用，目标 < 90 秒）
 #   ./scripts/check.sh --list     # 只列步骤，不执行
 #
@@ -114,6 +114,8 @@ if [ "$MODE" = "list" ]; then
   step 14 seo_matrix          "索引控制矩阵 S1~S11"
   step 15 doc_version_refs    "docs 正文不得出现需求基线版本号"
   step 16 table_integrity     "docs 表格孤行/列数不符/围栏未配对"
+  step 17 bench_self_test     "基准数据生成器自证（幂等/确定性/受保护库/非法tier）"
+  step 18 change_numbers      "变更编号台账（缺号/重号判红，行序错位只 WARN）"
   exit 0
 fi
 
@@ -210,6 +212,30 @@ else
   # 而状态机写错的方向是**少判**——把该红的行跳过，表现就是绿。这个方向没有别的信号。
   run_step 16 table_integrity "表格完整性" \
     bash -c './scripts/check-tables.sh --self-test && ./scripts/check-tables.sh'
+
+  # ---- 17 基准数据生成器自证 ------------------------------------------------
+  # 为什么这条必须进门禁：造数工具的全部失败方式都是"看起来成功了"——少造一半
+  # （压测绿得漂亮，因为负载轻了）、第二次跑又插一遍、灌进了开发库（本地账号与手工
+  # 数据没了）。三种都不会让调用方看到非零退出码。它的判据（幂等 / 跨库确定性 /
+  # 受保护库 / 非法 tier）只活在 `--self-test` 里，而**没被跑过的自证会烂掉**——
+  # verify-seo-matrix.sh 的 self-test 坏过整整一轮没人发现。
+  #
+  # 这一条**不带 --no-build**，是有意的：tools 工程不在 OpenStore.sln 里，
+  # 第 1 步的 `dotnet build` 根本不覆盖它，带 --no-build 就会静默地跑上一版二进制
+  # （实测过：源码改坏、构建失败，--no-build 照跑旧产物、自证全绿）。
+  # 因此这一步自己带 build，代价是几秒。
+  run_step 17 bench_self_test "基准数据生成器自证" \
+    dotnet run --project tools/OpenStore.Tools -- seed-bench --self-test
+
+  # ---- 18 变更编号台账 ------------------------------------------------------
+  # 这条脚本早就存在、自证也有，却**没有任何入口在跑它**——一个只有在自己被想起时
+  # 才存在的门禁，等于不存在（同 §17 的道理：没被跑过的自证会烂掉）。
+  #
+  # 它守的是"编号是永久记录"：该条作废就在描述里标已作废并保留编号，不要抽号。
+  # 抽号不会让任何东西变红，只会让所有"见 #NN"静默指错——而引用错是读不出来的。
+  # 判据 3 比**集合**不比行序：缺号 = 真的丢了记录（红），行序错位 = 抄写痕迹（WARN）。
+  run_step 18 change_numbers "变更编号台账" \
+    bash -c './scripts/check-change-numbers.sh --self-test && ./scripts/check-change-numbers.sh'
 fi
 
 # ---- 汇总 -------------------------------------------------------------------
