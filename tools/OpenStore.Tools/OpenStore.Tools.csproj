@@ -1,11 +1,28 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    独立的工程门禁工具。刻意与 src/ 下的四个项目解耦：
-      1) 它不引用任何 OpenStore.* 程序集 —— 门禁必须是"外部审查者"，不能靠被测代码自证。
-      2) <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>：仓库根有
-         Directory.Packages.props 做中央包管理，而本项目的包生命周期与后端无关（工具要能在
-         后端还没编译通过时先跑起来）。关掉中央管理后 PackageReference 自带 Version，互不干扰。
+    工程工具。门禁子命令与 src/ 严格解耦，造数子命令必须进 src/ —— 两条线各自的门禁不同，
+    混成一句"本项目不引用 src/"曾经是对的，在加入 seed-bench 之后就不再是事实了：
+
+      1) 门禁子命令（check-templates / check-themes）不引用任何 OpenStore.* 程序集 ——
+         门禁必须是"外部审查者"，不能靠被测代码自证。这条约束现在由
+         seed-bench 的 self-test 用例（gate_commands_stay_external）守着：一旦有人把
+         Validation/ 或 check-* 接到 Infrastructure/Domain/Application 上，自证立刻变红。
+         只有 Commands/SeedBench*.cs 与 Validation/ProtectedDatabases.cs 在豁免名单里。
+      2) 造数子命令（seed-bench）必须引用 OpenStore.Infrastructure —— 基准数据要穿
+         Product/ProductVariant 的构造守卫落库（理由见 BenchDataSeeder 类注释）。
+         让工具自己重写一份"合法商品长什么样"，等于把领域规则复制成两份，两份必然会分叉，
+         而分叉的表现是"压测数据一进领域层就抛不变量异常"，压测根本跑不到渲染。
+
+    3) <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>：仓库根有
+       Directory.Packages.props 做中央包管理，而本项目自有的两个包（JsonSchema.Net /
+       System.CommandLine）生命周期与后端无关（门禁要能在后端还没编译通过时先跑起来）。
+       Infrastructure 带来的 EF Core / Sqlite 依赖按被引用项目自己的版本解析，此处不参与。
+
+    副作用（已知并接受）：`dotnet build OpenStore.sln` 不包含本项目（本项目不在 sln 里），
+    因此门禁步骤 1 的 -warnaserror 不覆盖它 —— 本项目要单独 build 一次，否则门禁 step 9/10 的
+    带 no-build 的调用会跑旧产物。这一点写在 docs/06 §4.1 的用法段里。
+
     TargetFramework / Nullable / ImplicitUsings / TreatWarningsAsErrors 一律继承仓库根的
     Directory.Build.props（net8.0 + 零警告），不在本文件覆盖。
   -->
@@ -22,6 +39,11 @@
   <ItemGroup>
     <PackageReference Include="JsonSchema.Net" Version="8.0.5" />
     <PackageReference Include="System.CommandLine" Version="2.0.0" />
+  </ItemGroup>
+
+  <!-- 只为 seed-bench：见上面第 2 条。门禁子命令不得使用它（self-test 会拦）。 -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\OpenStore.Infrastructure\OpenStore.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>
