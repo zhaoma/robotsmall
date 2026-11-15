@@ -10,6 +10,7 @@
 #   ./scripts/verify-seo-matrix.sh https://shop.example.com \
 #       --archived-moved /zh/products/old-sku \
 #       --archived-gone  /zh/products/dead-sku \
+#       --archived-gone-from /zh/products/dead-sku-v1   # 同一商品的历史 slug，也必须是 410
 #       --out-of-stock   /zh/products/sold-out   # 不给则从 sitemap 自动找
 #   ./scripts/verify-seo-matrix.sh --self-test     # fail-before-pass 自证（本地 mock，不连真站）
 #
@@ -26,6 +27,7 @@ SELF_TEST=0
 TIMEOUT="${TIMEOUT:-10}"
 ARCH_MOVED="${ARCHIVED_MOVED_PATH:-}"
 ARCH_GONE="${ARCHIVED_GONE_PATH:-}"
+ARCH_GONE_FROM="${ARCHIVED_GONE_FROM_PATH:-}"
 OOS="${OUT_OF_STOCK_PATH:-}"
 
 while [ $# -gt 0 ]; do
@@ -35,8 +37,9 @@ while [ $# -gt 0 ]; do
     --timeout)         TIMEOUT="$2"; shift 2 ;;
     --archived-moved)  ARCH_MOVED="$2"; shift 2 ;;
     --archived-gone)   ARCH_GONE="$2"; shift 2 ;;
+    --archived-gone-from) ARCH_GONE_FROM="$2"; shift 2 ;;
     --out-of-stock)    OOS="$2"; shift 2 ;;
-    -h|--help)         sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help)         sed -n '2,30p' "$0"; exit 0 ;;
     -*)                echo "未知参数: $1" >&2; exit 2 ;;
     *)                 BASE="${1%/}"; shift ;;
   esac
@@ -283,8 +286,8 @@ run_matrix(){
 
   # ---- S9 归档商品：有替代分类 → 301；无替代 → 410（不是 404）
   echo "-- S9 归档商品页（301 / 410）"
-  if [ -z "$ARCH_MOVED" ] || [ -z "$ARCH_GONE" ]; then
-    echo "PRECONDITION: 缺归档商品 fixture（--archived-moved / --archived-gone）。缺 fixture = 未验证 = AC-11 不通过" >&2
+  if [ -z "$ARCH_MOVED" ] || [ -z "$ARCH_GONE" ] || [ -z "$ARCH_GONE_FROM" ]; then
+    echo "PRECONDITION: 缺归档商品 fixture（--archived-moved / --archived-gone / --archived-gone-from 三个都要给）。缺 fixture = 未验证 = AC-11 不通过" >&2
     return 2
   fi
   _probe_one "$BASE$ARCH_MOVED"
@@ -304,6 +307,19 @@ run_matrix(){
   else
     fail "S9 归档+无替代 状态码错" "http=${P_STATUS}（期望 410）url=$BASE$ARCH_GONE"
   fi
+
+  # 历史 slug（商品改名前的旧地址）：也必须 410，**不得** 301 到新 slug。
+  # 为什么钉这一格：规则 4「slug 变更 → 301 到新 slug」与 (b3)「归档 → 410」各自都对，
+  # 合起来若按"先查历史、再判状态"实现，老外链会走 301 → 410 两跳，
+  # Search Console 报"重定向错误"，比直接 410 更慢摘除。正确顺序是**先按 slug 解析出实体，再按实体当前状态分派**。
+  # 每次 _probe_one 都重新发请求、不复用上面的 P_*，所以与"301 落点必须 200"那条断言不会互相污染。
+  _probe_one "$BASE$ARCH_GONE_FROM"
+  case "$P_STATUS" in
+    410) pass "S9 归档商品的历史 slug → 410（不跳转）" ;;
+    301) fail "S9 历史 slug 被 301 到新 slug" "形成 301 → 410 两跳：爬虫读到'重定向错误'，比直接 410 更慢摘除。正确顺序是先解析实体、再按状态分派" ;;
+    404) fail "S9 历史 slug 返回了 404" "必须是 410（404 会被当成'可能回来'反复重试）url=$BASE$ARCH_GONE_FROM" ;;
+    *)   fail "S9 历史 slug 状态码错" "http=${P_STATUS}（期望 410，且不得 301）url=$BASE$ARCH_GONE_FROM" ;;
+  esac
 
   # ---- S10 在售但库存 0：200 + OutOfStock + 留在 sitemap；归档不在 sitemap
   echo "-- S10 缺货商品页（200 + OutOfStock + 留在 sitemap）"
@@ -328,7 +344,7 @@ run_matrix(){
   else pass "S10 缺货商品页无 noindex"; fi
   if in_sitemap "$BASE$OOS"; then pass "S10 缺货商品仍留在 sitemap"
   else fail "S10 缺货商品被从 sitemap 摘掉" "缺货 ≠ 下架；摘掉等于自愿放弃该页面的收录"; fi
-  if in_sitemap "$BASE$ARCH_MOVED" || in_sitemap "$BASE$ARCH_GONE"; then
+  if in_sitemap "$BASE$ARCH_MOVED" || in_sitemap "$BASE$ARCH_GONE" || in_sitemap "$BASE$ARCH_GONE_FROM"; then
     fail "S10 归档商品仍出现在 sitemap 里" "已归档商品必须从 sitemap 移除（否则爬虫反复抓 410）"
   else pass "S10 归档商品不在 sitemap"; fi
 
@@ -367,6 +383,7 @@ PRODP = "/zh/products/robot-arm"     # 在售有货
 OOSP  = "/zh/products/sold-out"      # 在售、库存 0
 ARCHM = "/zh/products/old-sku"       # 归档、有替代分类
 ARCHG = "/zh/products/dead-sku"      # 归档、无替代
+ARCHGF = "/zh/products/dead-sku-v1"  # 上面那个商品的历史 slug（改名前的旧地址），也必须 410
 NOI = ["/zh/cart", "/zh/checkout", "/zh/account", "/zh/orders/track",
        "/setup", "/zh/_preview", "/zh/search"]   # 前缀匹配，同 NOINDEX_PATTERNS
 
@@ -398,6 +415,10 @@ def route(path, q):
     if path == ARCHG:
         if MODE == "v6":                           # 注入：归档无替代返 404 而非 410
             return 404, "text/html", page(""), {}
+        return 410, "text/html", page(""), {}
+    if path == ARCHGF:
+        if MODE == "v9":   # 注入：先查 SlugHistory 再判状态 → 历史 slug 被 301 到新 slug（301 → 410 两跳）
+            return 301, "text/html", "", {"Location": BASE + ARCHG}
         return 410, "text/html", page(""), {}
     if path == OOSP:
         if MODE == "v5":                           # 注入：库存 0 返 404
@@ -444,7 +465,7 @@ with socketserver.TCPServer(("127.0.0.1", PORT), H) as srv:
     srv.serve_forever()
 PY
   echo "== fail-before-pass 自证（本地 mock，不连真站）"
-  ARCHM="/zh/products/old-sku"; ARCHG="/zh/products/dead-sku"; OOSF="/zh/products/sold-out"
+  ARCHM="/zh/products/old-sku"; ARCHG="/zh/products/dead-sku"; ARCHGF="/zh/products/dead-sku-v1"; OOSF="/zh/products/sold-out"
   local mode desc want port rc out pid i sfail=0 ninj=0 first
   # 用 heredoc 逐行读，不用空格分隔的字符串——描述里有空格会被 for 拆散
   while IFS='|' read -r mode desc want; do
@@ -457,9 +478,12 @@ PY
       i=$((i+1)); [ "$i" -gt 60 ] && break; sleep 0.1
     done
     BASE="http://127.0.0.1:${port}"
-    ARCH_MOVED="$ARCHM"; ARCH_GONE="$ARCHG"; OOS="$OOSF"
+    ARCH_MOVED="$ARCHM"; ARCH_GONE="$ARCHG"; ARCH_GONE_FROM="$ARCHGF"; OOS="$OOSF"
     # v8 故意不给 --out-of-stock，让判据自己去 sitemap 里找；v8 的 sitemap 里找不到。
     [ "$mode" = "v8" ] && OOS=""
+    # nogf：站点完全正常，只是没给"历史 slug"这个 fixture —— 必须走 PRECONDITION，
+    # 而不是"没传就跳过这条断言"。后者正是"缺 fixture 变假绿"的同一条通道。
+    [ "$mode" = "nogf" ] && ARCH_GONE_FROM=""
     # `< /dev/null` 不是可选项：清零时 stdin 正是下面那个 CASES heredoc，
     # 判据里任何一处 read 都会静默吃掉后面的用例（表现为"少跑几条还报绿"）。
     run_matrix > "$tmp/out.$mode" 2>&1 < /dev/null; rc=$?
@@ -496,7 +520,9 @@ v4|筛选第 2 页 canonical 指 ?page=2|S3
 v5|库存 0 的商品返 404|S10
 v6|归档无替代返 404（而非 410）|S9
 v7|归档有替代返 200（而非 301）|S9
+v9|归档商品的历史 slug 被 301 到新 slug（301→410 两跳）|S9
 v8|缺 out-of-stock fixture（sitemap 里找不到 OutOfStock 商品）|PRECONDITION
+nogf|缺 --archived-gone-from（历史 slug fixture 未给）|PRECONDITION
 CASES
   rm -rf "$tmp"
   [ "$sfail" -eq 0 ] && { echo "== 自证通过：正样本绿；${ninj} 个注入各自红在预期断言上"; return 0; }
