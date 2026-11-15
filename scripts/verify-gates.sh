@@ -83,12 +83,21 @@ trap cleanup EXIT INT TERM
 say()  { printf '%s\n' "$*"; }
 head_of() { sed -e 's/^/    /' "$1" | head -"${2:-12}"; }
 
-# 靠 glob 发现目标文件；找不到就返回 1（调用方必须据此大声失败）
+# 靠模式发现目标文件；找不到就返回 1（调用方必须据此大声失败）
+#
+# 用 find -path 而不是 `ls $pat`：ls 的 `**` 与 `*` 等价，只能跨一层目录。
+# M0 实测：V4 的 src/OpenStore.Application/**/StorefrontProductDto.cs 实际位于
+# Catalog/Dtos/Storefront/ 下（三层），ls 匹配不到 → find_one 返回空 → 整段 if 落空
+# → V4 从未执行过一次，而脚本照样退出 0。**声明了 8 条注入，实跑 7 条还报成功**，
+# 这正是本脚本开头写"跳过是最危险的绿"要防的东西。
+# find 的 -path 里 `*` 可以跨 `/`，所以 `**` 与 `*` 都能跨任意层，语义符合直觉。
 find_one() {
-  local f
+  local pat hit
   for pat in "$@"; do
-    f=$(ls $pat 2>/dev/null | head -1)
-    [ -n "$f" ] && { printf '%s' "$f"; return 0; }
+    hit=$(find . -type f -path "./$pat" \
+            -not -path "*/bin/*" -not -path "*/obj/*" -not -path "*/node_modules/*" 2>/dev/null \
+          | sort | head -1)
+    [ -n "$hit" ] && { printf '%s' "${hit#./}"; return 0; }
   done
   return 1
 }
@@ -124,14 +133,30 @@ snapshot() {
 }
 
 # 变更前断言锚点存在。缺失 = 代码搬走了 = 这条注入已失效，必须红。
+#
+# 注意它**自己记账**（FAIL/FAILED），不再只是 return 1 让调用方落空。
+# 早先版本里调用方写的是 `if [ -n "$F" ] && require_anchor ...; then`，
+# 锚点缺失时整个 if 直接为假、什么也不发生 —— 打印了一行 "ANCHOR MISSING" 就继续跑，
+# 最终汇总照样是 failed=0、退出码 0。**"声明要红"和"真的红了"之间差了一次记账。**
 require_anchor() {
-  local file="$1" pattern="$2"
+  local id="$1" gate="$2" file="$3" pattern="$4"
   if ! grep -qE "$pattern" "$file" 2>/dev/null; then
-    say "  ANCHOR MISSING in $file: /$pattern/"
-    say "  → 这条注入的目标代码已经移动或改写。请修本脚本的锚点，不要删除这条注入。"
+    printf '  %-3s %-18s ' "$id" "$gate"; printf 'ANCHOR-MISSING\n'
+    say "  在 $file 里找不到锚点：/$pattern/"
+    say "  → 注入目标代码已经移动或改写。请修本脚本的锚点，**不要删除这条注入**。"
+    FAIL=$((FAIL+1)); FAILED+=("$id:anchor-missing")
     return 1
   fi
   return 0
+}
+
+# 靶点缺失同样必须记账。这条注入等于不存在，绝不能变成"少一条但报成功"。
+require_target() {
+  local id="$1" gate="$2" pattern="$3"
+  printf '  %-3s %-18s ' "$id" "$gate"; printf 'NO-TARGET\n'
+  say "  找不到注入靶点：$pattern"
+  say "  → 文件被移动/改名，或 find 模式写错。这条注入目前等于不存在，必须修。"
+  FAIL=$((FAIL+1)); FAILED+=("$id:no-target")
 }
 
 # 前置：先构建一次，确保基线是绿的。基线不绿的话所有"变红"都没有意义。
@@ -203,8 +228,12 @@ say "== 注入清单 =="
 if [ -z "$ONLY" ] || [ "$ONLY" = "V1" ]; then
   F=$(find_one "src/OpenStore.Domain/Shared/Money.cs" "src/OpenStore.Domain/**/Money.cs")
   CSP=$(find_one "src/OpenStore.Domain/OpenStore.Domain.csproj")
-  if [ -n "$F" ] && [ -n "$CSP" ] && require_anchor "$F" "record struct Money|class Money" \
-     && require_anchor "$CSP" "</Project>"; then
+  if [ -z "$F" ]; then
+    require_target V1 layering "src/OpenStore.Domain/**/Money.cs"
+  elif [ -z "$CSP" ]; then
+    require_target V1 layering "src/OpenStore.Domain/OpenStore.Domain.csproj"
+  elif require_anchor V1 layering "$F" "record struct Money|class Money" \
+     && require_anchor V1 layering "$CSP" "</Project>"; then
     snapshot "$F"; snapshot "$CSP"
     python3 - "$CSP" "$F" <<'PY'
 import sys,re
@@ -230,7 +259,9 @@ fi
 # -----------------------------------------------------------------------------
 if [ -z "$ONLY" ] || [ "$ONLY" = "V2" ]; then
   F=$(find_one "src/OpenStore.Domain/Catalog/Product.cs")
-  if [ -n "$F" ] && require_anchor "$F" "class Product"; then
+  if [ -z "$F" ]; then
+    require_target V2 bounded_contexts "src/OpenStore.Domain/Catalog/Product.cs"
+  elif require_anchor V2 bounded_contexts "$F" "class Product"; then
     snapshot "$F"
     python3 - "$F" <<'PY'
 import sys
@@ -256,7 +287,9 @@ fi
 # -----------------------------------------------------------------------------
 if [ -z "$ONLY" ] || [ "$ONLY" = "V3" ]; then
   F=$(find_one "src/OpenStore.Api/Endpoints/Admin/ProductAdminEndpoints.cs")
-  if [ -n "$F" ] && require_anchor "$F" "RequireAuthorization\(Permissions\."; then
+  if [ -z "$F" ]; then
+    require_target V3 authorization "src/OpenStore.Api/Endpoints/Admin/ProductAdminEndpoints.cs"
+  elif require_anchor V3 authorization "$F" "RequireAuthorization\(Permissions\."; then
     snapshot "$F"
     python3 - "$F" <<'PY'
 import sys,re
@@ -272,20 +305,40 @@ fi
 
 # -----------------------------------------------------------------------------
 # V4  前台数据隔离：DTO 加内部字段
+#
+# 注入必须按 DTO 的**实际形态**写，不能假设它是带花括号的 class：
+# M1 的 StorefrontProductDto 是 positional record（`sealed record X(a, b, c);`），
+# 既没有 `class` 关键字、也没有花括号体。原先的锚点 "class StorefrontProductDto"
+# 与注入（在最后一个 `}` 前插属性）对它全部失效 —— 而旧版脚本在锚点缺失时只是打印
+# 一行就继续跑，于是 V4 从未执行过一次。这条注入的失效只有靠"执行条数会计"才能发现。
+#
+# 现在的注入：定位 record 头，在它的参数表收尾 `);` 处补一个带属性的 body。
+# positional record 的参数本身就是属性，所以补 body 与补参数等价；用 body 更稳，
+# 因为它不依赖最后一个参数叫什么名字。
 # -----------------------------------------------------------------------------
 if [ -z "$ONLY" ] || [ "$ONLY" = "V4" ]; then
   F=$(find_one "src/OpenStore.Application/**/StorefrontProductDto.cs")
-  if [ -n "$F" ] && require_anchor "$F" "class StorefrontProductDto"; then
+  if [ -z "$F" ]; then
+    require_target V4 storefront_dto "src/OpenStore.Application/**/StorefrontProductDto.cs"
+  elif require_anchor V4 storefront_dto "$F" "record StorefrontProductDto"; then
     snapshot "$F"
     python3 - "$F" <<'PY'
 import sys,re
 p=sys.argv[1]
 s=open(p,encoding='utf-8').read()
-i=s.rfind('}')
-s=s[:i]+'    public long CostAmount { get; init; }\n'+s[i:]
+m=re.search(r'record\s+StorefrontProductDto\s*\(', s)
+if not m:
+    sys.exit(3)
+i=s.index(');', m.end())
+s=s[:i]+')\n{\n    public long CostAmount { get; init; }\n}'+s[i+2:]
 open(p,'w',encoding='utf-8').write(s)
 PY
-    run_injection V4 storefront_dto "CostAmount leaks admin field" g_arch StorefrontDto
+    if [ $? -ne 0 ]; then
+      say "  V4 ANCHOR SHAPE MISSING：StorefrontProductDto 的参数表收尾 ');' 没找到，注入未生效。"
+      FAIL=$((FAIL+1)); FAILED+=("V4:anchor-shape")
+    else
+      run_injection V4 storefront_dto "CostAmount leaks admin field" g_arch StorefrontDto
+    fi
     restore_files
   fi
 fi
@@ -295,7 +348,9 @@ fi
 # -----------------------------------------------------------------------------
 if [ -z "$ONLY" ] || [ "$ONLY" = "V5" ]; then
   F=$(find_one "assets/industry-templates/womenswear/template.json")
-  if [ -n "$F" ] && require_anchor "$F" '"themeId"'; then
+  if [ -z "$F" ]; then
+    require_target V5 templates "assets/industry-templates/womenswear/template.json"
+  elif require_anchor V5 templates "$F" '"themeId"'; then
     snapshot "$F"
     python3 - "$F" <<'PY'
 import sys,json
@@ -325,7 +380,9 @@ fi
 # -----------------------------------------------------------------------------
 if [ -z "$ONLY" ] || [ "$ONLY" = "V6" ]; then
   F=$(find_one "themes/base/blocks.schema.json")
-  if [ -n "$F" ] && require_anchor "$F" '"\$defs"|blockKey'; then
+  if [ -z "$F" ]; then
+    require_target V6 themes "themes/base/blocks.schema.json"
+  elif require_anchor V6 themes "$F" '"\$defs"|blockKey'; then
     snapshot "$F"
     python3 - "$F" <<'PY'
 import sys,re
@@ -358,7 +415,9 @@ fi
 # -----------------------------------------------------------------------------
 if [ -z "$ONLY" ] || [ "$ONLY" = "V7" ]; then
   F=$(find_one "src/OpenStore.Infrastructure/Persistence/Configurations/ProductConfiguration.cs")
-  if [ -n "$F" ] && require_anchor "$F" 'ToTable\("Product"\)'; then
+  if [ -z "$F" ]; then
+    require_target V7 migrations "src/OpenStore.Infrastructure/Persistence/Configurations/ProductConfiguration.cs"
+  elif require_anchor V7 migrations "$F" 'ToTable\("Product"\)'; then
     snapshot "$F"
     python3 - "$F" <<'PY'
 import sys
@@ -377,7 +436,9 @@ fi
 # -----------------------------------------------------------------------------
 if [ -z "$ONLY" ] || [ "$ONLY" = "V8" ]; then
   F=$(find_one "src/OpenStore.Domain/Ordering/OrderStatusMachine.cs")
-  if [ -n "$F" ] && require_anchor "$F" "PendingPayment"; then
+  if [ -z "$F" ]; then
+    require_target V8 domain_tests "src/OpenStore.Domain/Ordering/OrderStatusMachine.cs"
+  elif require_anchor V8 domain_tests "$F" "PendingPayment"; then
     snapshot "$F"
     python3 - "$F" <<'PY'
 import sys,re
@@ -401,6 +462,25 @@ PY
 fi
 
 # -----------------------------------------------------------------------------
+# 收口：**执行条数必须等于声明条数**
+#
+# 前面每个"静默跳过"都被改成了记账，但没有会计对总量：如果将来有人删掉一整段 if
+# （而不是注释掉某个 if 内部语句），或者 ONLY 之外加了新的跳过路径，
+# failed 仍然是 0、proven 少一条，脚本照样退出 0。
+# 声明清单取自 --list 的同一个正则，所以"列出来的"与"要求执行的"不会各自演化。
+# -----------------------------------------------------------------------------
+if [ -z "$ONLY" ]; then
+  PLANNED=$(grep -oE 'V[0-9]+ (layering|bounded_contexts|authorization|storefront_dto|templates|themes|migrations|domain_tests)' "$0" \
+            | sort -u | wc -l | tr -d ' ')
+  EXECUTED=$((PASS + FAIL))
+  if [ "$EXECUTED" -ne "$PLANNED" ]; then
+    say ""
+    say "== 覆盖不完整：声明 $PLANNED 条注入，实际只执行 $EXECUTED 条 =="
+    say "差额是静默跳过 —— 它和「红错地方」一样致命，因为汇总看起来是成功的。"
+    FAIL=$((FAIL+1)); FAILED+=("count:$EXECUTED/$PLANNED")
+  fi
+fi
+
 say ""
 say "== 汇总: proven=$PASS failed=$FAIL =="
 if [ "$FAIL" -gt 0 ]; then
