@@ -7,6 +7,10 @@
   ],
   "currency": "CNY",
   "publicSiteUrl": "https://shop.example.com",
+  "reset": {
+    "slugPrefix": "fx-",
+    "internalCodes": ["FIXTURE", "FX-ARM-3000"]
+  },
   "probe": {
     "tier": "fallback",
     "target": { "productKey": "fx-mug", "locale": "en", "field": "description" }
