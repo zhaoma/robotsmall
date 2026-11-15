@@ -18,6 +18,23 @@ info:
     3. **破坏性变更**：只允许"新增字段 + 旧字段保留 1 个 minor"；`amount` / `totalPages` / `/checkout/submit` / `sort=relevance` 这四种旧写法**已作废**
        （`docs/03` §13 台账），本文件里出现它们即为 bug。
 
+    # 覆盖范围（**进了什么、没进什么，都是显式决定**）
+
+    "契约里不出现就是有意不出现"这条（上面第 2 条）有个**副作用**：分不清"有意不出现"与"漏了"。所以这里把覆盖口径写死。
+
+    | 类别 | 本轮在契约里 | 说明 |
+    |---|---|---|
+    | 管理端 · 目录与库存 | ✅ 全部 | `products` / `categories` / `attributes` / `attribute-sets` / `inventory`（含变体矩阵三个端点） |
+    | 管理端 · 认证 | ✅ 4 个 | `login` / `logout` / `me` / `change-password` |
+    | 门面 · 浏览 | ✅ 3 个 | `products`（列表/详情）、`categories`、`bootstrap` |
+    | 运维 | ✅ 2 个 | `/health/live`、`/health/ready` |
+    | **门面 · 购买链** | ❌ **不在本轮** | `cart/*`、`checkout/quote`、`checkout/confirm`、`orders/{n}`、`orders/{n}/pay`、`orders/{n}/pay-url` —— 与 `/api/setup/*` 属同一批 |
+    | **管理端 · 订单/退款/设置/仪表盘** | ❌ **不在本轮** | `orders/*`、`refunds/*`、`settings/*`、`dashboard/summary`、`media/*` |
+    | **`/api/setup/*`（向导 9 个端点）** | ❌ **不在本轮** | 但**三个向导码已在 `ProblemCode.enum` 里先行登记**（见该 schema 说明）：码的拼写是契约，**路径的排期不是** |
+
+    **这一格必须诚实读**：`/api/setup/*` 的路径缺失**不是遗漏**，是与购买链同一批的**排期**。不要因为"向导码已在枚举里"就推断"向导路径已进契约"，也不要反过来因为"路径没进"就把码从枚举里删掉——**码与路径是两个轴**（理由见 `ProblemCode` 的说明）。
+    **覆盖口径变更时同步改这张表**：这张表存在的唯一理由，是让下一个人不必靠"数少了几个"来猜。
+
     # 全局约定（读契约前先读这 6 条）
 
     | 约定 | 内容 |
@@ -2494,8 +2511,7 @@ components:
           但**不要指望本轮能真的调出这个响应**。这是排期问题，不是契约问题；把它从枚举里删掉才是破坏契约。
         - **不在枚举内、但有端点** → 这是**缺陷**，必须先补枚举再用（`x-doc-deltas` D18 就是这条的执行痕迹）。
 
-        **例外：三个向导码 `SetupAlreadyCompleted` / `SetupInProgress` / `SetupResetting` 已先行登记在本枚举里**（虽然
-        `/api/setup/*` 的路径表还没补齐）。理由：它们的拼写已被 `docs/01`、`docs/03` §5.1、架构三处声明为**契约**，
+        **例外：三个向导码 `SetupAlreadyCompleted` / `SetupInProgress` / `SetupResetting` 已先行登记在本枚举里**（`/api/setup/*` 的路径不在本轮覆盖范围内，见 `info.description` 的「覆盖范围」）。理由：它们的拼写已被 `docs/01`、`docs/03` §5.1、架构三处声明为**契约**，
         而"改错误码等于破坏契约"这条约束**缺了枚举就成了唯一没有机器执行的地方** —— 前端只能手写字符串，写错一个字母
         不报错，只表现为"向导页面卡在加载态"。**PascalCase 是需求原文，不要"统一"成大写下划线。**
       enum:
@@ -2720,9 +2736,22 @@ components:
               unlockAt: '2025-11-15T17:02:00+08:00'
 
     TooManyRequestsProblem:
-      description: 限流（`429 RATE_LIMIT_EXCEEDED` + `Retry-After`）。`details.scope` 标明命中的策略（`read`/`write`/`login`/…）
+      description: |
+        限流（`429 RATE_LIMIT_EXCEEDED` + `Retry-After`）。
+
+        `details` 给**三个字段**，`scope` 与 `policy` 是**两个轴**，不是同义改写（`docs/03` §6.7）：
+        - `details.scope` ∈ `read` | `write` | `endpoint` —— **桶的层级**。前端据此决定提示口吻（方法级被限 = "访问过快"，
+          用户其实没做错什么；端点级被限 = 具体操作的提示）。只有这一层，前端做不出差异化文案。
+        - `details.policy` —— **命中的具体策略名**（`read`/`write`/`login`/`password-reset`/`checkout-confirm`/`order-lookup`/
+          `refresh-payment`/`webhook`/`admin-write`）。`scope=endpoint` 会把四种端点级策略糊成一个值，而它们的处置完全不同；
+          排障时"哪个桶满了"是第一个要回答的问题。
+        - `details.retryAfterSeconds` —— 与响应头 `Retry-After` **同值**。前端要显示"X 秒后重试"时读头需要 CORS 暴露
+          （`Access-Control-Expose-Headers`），admin 与站点一旦分域就读不到；**现在补成本为零，进契约后再改是 breaking change**。
+
+        **报的必须是"实际余量为 0 的那个桶"**：方法级与端点级是**串行 AND**（一次请求按序过它命中的每一个桶，
+        任一为 0 即 429）；若两个同时耗尽，报顺序上先判定的那个。**报错的桶 ≠ 真正卡住它的桶，会让排障方向整个偏掉。**
       headers:
-        Retry-After: { schema: { type: integer, example: 30 }, description: 建议等待秒数 }
+        Retry-After: { schema: { type: integer, example: 30 }, description: 建议等待秒数（与 `details.retryAfterSeconds` 同值） }
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -2736,7 +2765,9 @@ components:
             correlationId: 0HMZ7Q2K9V3T1
             errors: null
             details:
-              scope: admin-write
+              scope: endpoint
+              policy: admin-write
+              retryAfterSeconds: 30
 
     ServiceUnavailableProblem:
       description: |
