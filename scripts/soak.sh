@@ -7,6 +7,7 @@
 #   ./scripts/soak.sh --tier standard --duration 1800 --conc 12
 #   ./scripts/soak.sh --tier small --cold 300 --cold-restart   # 冷启动后立刻压 5 分钟（AC-12 最容易 OOM 的窗口）
 #   ./scripts/soak.sh --tier small --kernel-log skip           # 显式放弃内核日志源（会记 WARN，不是默认）
+#   ./scripts/soak.sh --tier small --seed-meta seed.out        # 把 seed-bench 的输出存进去，便于核对两轮是否同一批数据
 #   ./scripts/soak.sh --self-test          # 只验"判定逻辑能不能红"，不连站、不需要 docker
 #   ./scripts/soak.sh --self-test --verbose
 #
@@ -68,6 +69,7 @@ VERBOSE=0
 COLD=300            # 冷启动阶段时长（秒）。0 = 不跑。默认 300 = §2.6.1 要求的"冷启动后立刻压 5 分钟"
 COLD_RESTART=0      # 1 = 冷启动阶段前真的 restart 容器（否则假定操作者刚起过站）
 KERNEL_MODE=auto    # auto = 采内核日志，采不到就 rc=2；require = 同上但更严；skip = 显式放弃（记 WARN）
+SEED_META=""        # seed-bench 的输出（key=value）。给了就把 fingerprint 写进 META：行数相同不代表同一批数据
 ARGS=()
 
 while [ $# -gt 0 ]; do
@@ -89,6 +91,8 @@ while [ $# -gt 0 ]; do
     --cold-restart) COLD_RESTART=1; shift ;;
     --kernel-log)   KERNEL_MODE="${2:-}"; shift 2 ;;
     --kernel-log=*) KERNEL_MODE="${1#--kernel-log=}"; shift ;;
+    --seed-meta)    SEED_META="${2:-}"; shift 2 ;;
+    --seed-meta=*)  SEED_META="${1#--seed-meta=}"; shift ;;
     --list)
       printf 'A1 采样点充足（否则 rc=2 未验证）\n'
       printf 'A2 请求量充足（否则 rc=2 未验证）\n'
@@ -469,6 +473,16 @@ main() {
     sku=$(docker compose exec -T api sqlite3 /data/openstore.db "select count(*) from Product;" 2>/dev/null | tr -d ' \r')
     ord=$(docker compose exec -T api sqlite3 /data/openstore.db "select count(*) from Order;" 2>/dev/null | tr -d ' \r')
     printf 'products=%s orders=%s\n' "${sku:-?}" "${ord:-?}"
+    # 数据集指纹：**行数相同不代表同一批数据**。两份 products=2000 的数据可以完全不同，
+    # 此时两轮压测结论不可横向比较（先怀疑数据集变了，而不是先怀疑代码退化）。
+    if [ -n "$SEED_META" ] && [ -f "$SEED_META" ]; then
+      local k
+      for k in seed_version products variants per_category fingerprint; do
+        printf '%s=%s\n' "$k" "$(awk -F= -v key="$k" '$1==key{print $2; exit}' "$SEED_META" 2>/dev/null)"
+      done
+    else
+      printf 'seed_version=? variants=? fingerprint=?(未给 --seed-meta：两轮结论不可横向比较)\n'
+    fi
     printf 'sitemap_urls=%s\n' "$(curl -s --max-time 10 "${BASE}/sitemap.xml" 2>/dev/null | grep -c '<loc>')"
   } > "$META" 2>&1
   say "   规格/数据量指纹：${META}"
