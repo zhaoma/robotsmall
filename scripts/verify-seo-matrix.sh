@@ -293,9 +293,34 @@ run_matrix(){
   _probe_one "$BASE$ARCH_MOVED"
   if [ "$P_STATUS" = "301" ]; then
     pass "S9 归档+有替代 → 301"
-    case "${P_LOC#"$BASE"}" in
-      "/$LOCALE/c/"*) pass "S9 301 指向分类页（${P_LOC#"$BASE"}）" ;;
-      *) fail "S9 301 目标不是分类页" "Location=${P_LOC}（应指向 /$LOCALE/c/…）" ;;
+    local loc="$P_LOC"
+    # ① Location 必须**绝对 URL 且以 $BASE 开头**。契约（00-architecture）：Location 一律绝对 URL、
+    #   来源 PublicSiteUrl，禁止读请求 Host；归档 301 的 redirectTo 同样受这条约束。
+    #   相对路径的 origin 由接收方决定，无法证明来源未被 Host 头影响 —— 正是 AC-10 禁止的形态。
+    case "$loc" in
+      "$BASE"*) pass "S9 301 的 Location 是绝对 URL（来源 PublicSiteUrl）" ;;
+      "") fail "S9 301 缺 Location 头" "301 没有 Location：爬虫不知道该去哪，权重直接落空" ;;
+      *) fail "S9 301 的 Location 不是绝对 URL" "契约要求 Location 一律绝对 URL 且来源 PublicSiteUrl（禁止读请求 Host）。相对路径的 origin 由接收方决定，无法证明来源未被 Host 头影响 —— AC-10 禁止的形态。实际=${loc}" ;;
+    esac
+    # ② 前缀只判 /$LOCALE/c/。**不收窄到具体某一层**：取最深哪一层归 fixture 级 E2E（W83），
+    #   脚本钉死层级会把合法变通判红——而"多余约束让合法实现变红"的门禁最终会被关掉。
+    case "${loc#"$BASE"}" in
+      "/$LOCALE/c/"*) pass "S9 301 指向分类页（${loc#"$BASE"}）" ;;
+      *) fail "S9 301 目标不是分类页" "Location=${loc}（应指向 /$LOCALE/c/…）" ;;
+    esac
+    # ③ 落点必须**再取一次**并断言 200。这一条只有一种合法结果（页面存在就是存在），
+    #   与"取最深"不同，不能交给 E2E。
+    #   为什么必须单列：301 指对了、目标页却 404 时，上面两条判据全绿 —— 只查 Location 字面永远发现不了。
+    #   resolver 只保证"有替代分类就 301"，不保证该分类页真的可渲染（分类被删/被合并/层级算错），
+    #   而"跳到一个 404"比不跳更糟：既丢权重又让 Search Console 记"重定向错误"。
+    case "$loc" in
+      "$BASE"*)
+        _probe_one "$loc"
+        if [ "$P_STATUS" = "200" ]; then
+          pass "S9 301 落点可访问（200）"
+        else
+          fail "S9 301 落点不可访问（${P_STATUS}）" "301 指对了、目标页却 ${P_STATUS}：爬虫跟过去拿到错误页，权重无处落地。Location=${loc}"
+        fi ;;
     esac
   else
     fail "S9 归档+有替代 未返回 301" "http=$P_STATUS url=$BASE${ARCH_MOVED}（302 是临时跳转，301 才传递权重）"
@@ -314,6 +339,13 @@ run_matrix(){
   # Search Console 报"重定向错误"，比直接 410 更慢摘除。正确顺序是**先按 slug 解析出实体，再按实体当前状态分派**。
   # 每次 _probe_one 都重新发请求、不复用上面的 P_*，所以与"301 落点必须 200"那条断言不会互相污染。
   _probe_one "$BASE$ARCH_GONE_FROM"
+  # 先判 Location 再判状态码：带 Location 就是"两跳"的直接痕迹，比状态码更能归因
+  # （301 → 410 两跳里，第一跳的 Location 才是病因；只看最终状态码会把病因写在"状态码错"上）。
+  if [ -n "$P_LOC" ]; then
+    fail "S9 历史 slug 不得带 Location" "响应带了 Location=${P_LOC}：说明走了\"先查历史、后判状态\"，形成 301 → 410 两跳。实体当前状态必须优先于入口路径，正确顺序是\"先按 slug 解析出实体 → 再按实体当前状态分派\""
+  else
+    pass "S9 历史 slug 未带 Location（无两跳痕迹）"
+  fi
   case "$P_STATUS" in
     410) pass "S9 归档商品的历史 slug → 410（不跳转）" ;;
     301) fail "S9 历史 slug 被 301 到新 slug" "形成 301 → 410 两跳：爬虫读到'重定向错误'，比直接 410 更慢摘除。正确顺序是先解析实体、再按状态分派" ;;
@@ -411,13 +443,15 @@ def route(path, q):
     if path == ARCHM:
         if MODE == "v7":                           # 注入：归档有替代却返回 200
             return 200, "text/html", page(canon(ARCHM)), {}
+        if MODE == "v9":                           # 注入：301 指向**不存在的分类页** → 落点 404
+            return 301, "text/html", "", {"Location": BASE + "/zh/c/no-such-category"}
         return 301, "text/html", "", {"Location": BASE + CATP}
     if path == ARCHG:
         if MODE == "v6":                           # 注入：归档无替代返 404 而非 410
             return 404, "text/html", page(""), {}
         return 410, "text/html", page(""), {}
     if path == ARCHGF:
-        if MODE == "v9":   # 注入：先查 SlugHistory 再判状态 → 历史 slug 被 301 到新 slug（301 → 410 两跳）
+        if MODE == "v10":  # 注入：先查 SlugHistory 再判状态 → 历史 slug 被 301 到新 slug（301 → 410 两跳）
             return 301, "text/html", "", {"Location": BASE + ARCHG}
         return 410, "text/html", page(""), {}
     if path == OOSP:
@@ -440,6 +474,10 @@ def route(path, q):
                 return 200, "text/html", page(canon(CATP)), {}
             return 200, "text/html", page(canon(CATP + "?page=" + q["page"][0])), {}
         return 200, "text/html", page(canon(CATP) + '<a href="%s?f.interface=usb-c">USB-C</a>' % CATP), {}
+    if path.startswith("/zh/c/") and path != CATP:
+        # 不存在的分类页：v9 靠它证明"301 指对了、落点却 404"会被第 ③ 条断言抓住。
+        # 若这里兜底返 200，v9 就永远绿 —— 那样新断言等于不存在。
+        return 404, "text/html", page(""), {}
     if any(path.startswith(x) for x in NOI):
         return 200, "text/html", page(noindex()), {}
     return 200, "text/html", page(""), {}
@@ -511,6 +549,12 @@ PY
       fi
     fi
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  # 注入编号空间说明（防止下一个人误以为跨文件同名同义）：
+  #   v1~v10 是**本文件自证空间的编号**，与 docs/03 §9.2 的 V1~V12（后端/架构门禁注入，
+  #   例如 V9 = storefront DTO 不泄露内部字段）**毫无关系**。跨文件同名不同义是允许的，
+  #   但两边都必须写明，否则会有人以为"V9 已经有人做了"。
+  #   v9  = 归档 301 的落点返回 404（红在"落点可访问"那条，不是状态码那条）
+  #   v10 = 归档商品的历史 slug 被 301 到新 slug（红在"不得带 Location"那条）
   done <<'CASES'
 ok|正确样本（六档全对）|-
 v1|robots 加 Disallow:/*?*|S7
@@ -518,9 +562,10 @@ v2|给筛选页加 noindex|S3
 v3|无筛选第 2 页 canonical 指第 1 页|S4
 v4|筛选第 2 页 canonical 指 ?page=2|S3
 v5|库存 0 的商品返 404|S10
-v6|归档无替代返 404（而非 410）|S9
-v7|归档有替代返 200（而非 301）|S9
-v9|归档商品的历史 slug 被 301 到新 slug（301→410 两跳）|S9
+v6|归档无替代返 404（而非 410）|S9 归档+无替代 返回了 404
+v7|归档有替代返 200（而非 301）|S9 归档+有替代 未返回 301
+v9|归档 301 落点 404（Location 指向不存在的分类页）|S9 301 落点不可访问
+v10|归档商品的历史 slug 被 301 到新 slug（301→410 两跳）|S9 历史 slug 不得带 Location
 v8|缺 out-of-stock fixture（sitemap 里找不到 OutOfStock 商品）|PRECONDITION
 nogf|缺 --archived-gone-from（历史 slug fixture 未给）|PRECONDITION
 CASES
