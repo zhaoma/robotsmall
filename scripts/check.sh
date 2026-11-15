@@ -47,7 +47,90 @@ case ":$PATH:" in
 esac
 
 LOGDIR="$(mktemp -d)"
-trap 'rm -rf "$LOGDIR"' EXIT
+
+# ---------------------------------------------------------------------------
+# 并发锁（mkdir 原子锁；不用 flock —— 那是 util-linux，macOS 默认没有）
+#
+# 为什么要锁：同时跑两个 check.sh 会互相踩构建产物与测试临时目录，结果是**假失败**。
+# 假失败的门禁下场和恒红门禁一样——被关掉。这不是"有点吵"，是门禁的存亡问题。
+#
+# 三条设计约束（少一条就不该加这个锁）：
+#   1) mkdir 在两个平台都是原子的；`flock` 在 macOS 上根本不存在。
+#   2) 抢不到必须 **rc=2 快速失败**，并打印持锁 pid + 起始时间 + 建议动作。
+#      静默等待会让人以为卡死；静默继续等于没锁。
+#   3) 过期锁**自愈**：持锁进程已不存在（kill -0 失败）或锁龄超阈值 → 打印"回收过期锁"后接管。
+#      手工 rm 锁文件是这类脚本最常见的运维事故，不该要求人去做。
+#      锁龄也要判，因为 pid 会被无关进程复用：那时 kill -0 成功、锁却早该回收了。
+# ---------------------------------------------------------------------------
+# TMPDIR 在 macOS 上带尾斜杠，直接拼会出现 `T//openstore-check.lock`（只是难看，
+# 但报错信息里的路径就是人要去核对的东西，不该带噪声）
+LOCK_ROOT="${CHECK_LOCK_DIR:-${TMPDIR:-/tmp}}"
+LOCK_ROOT="${LOCK_ROOT%/}"
+LOCKDIR="$LOCK_ROOT/openstore-check.lock"
+LOCK_STALE_SECONDS="${CHECK_LOCK_STALE_SECONDS:-1800}"
+LOCK_HELD=0
+
+cleanup_all() {
+  [ "$LOCK_HELD" = "1" ] && rm -rf "$LOCKDIR"
+  rm -rf "$LOGDIR"
+}
+trap cleanup_all EXIT INT TERM
+
+lock_field() {  # $1 文件 → 内容（去掉空白与 CR；文件不存在时为空）
+  [ -f "$1" ] && tr -d ' \r\n' < "$1" 2>/dev/null || true
+}
+
+acquire_lock() {
+  local pid started age now
+  if mkdir "$LOCKDIR" 2>/dev/null; then
+    LOCK_HELD=1
+    printf '%s\n' "$$" > "$LOCKDIR/pid"
+    date +%s > "$LOCKDIR/epoch"
+    printf 'pid=%s cwd=%s mode=%s\n' "$$" "$ROOT" "$MODE" > "$LOCKDIR/who"
+    return 0
+  fi
+
+  pid=$(lock_field "$LOCKDIR/pid")
+  started=$(lock_field "$LOCKDIR/epoch")
+  now=$(date +%s)
+  age="?"
+  [ -n "$started" ] && case "$started" in ''|*[!0-9]*) age="?" ;; *) age=$((now - started)) ;; esac
+
+  if [ -n "$pid" ] && case "$pid" in ''|*[!0-9]*) false ;; *) kill -0 "$pid" 2>/dev/null ;; esac; then
+    if [ "$age" != "?" ] && [ "$age" -le "$LOCK_STALE_SECONDS" ]; then
+      {
+        printf 'LOCKED: 另一个 check.sh 正在运行，本次拒绝并行执行（rc=2）\n'
+        printf '  持锁 pid=%s  已运行 %ss（阈值 %ss）  %s\n' "$pid" "$age" "$LOCK_STALE_SECONDS" \
+          "$( [ -f "$LOCKDIR/who" ] && cat "$LOCKDIR/who" || printf '起于=? (旧版锁没有记录)' )"
+        printf '  为什么拒绝：两个门禁同时跑会互相踩构建产物与测试临时目录 → 假失败；\n'
+        printf '  假失败的门禁最后一定会被关掉。等它结束再跑，不要并行。\n'
+        printf '  若确认那个进程已经不该存在：kill %s，本脚本会自动回收过期锁（不要手工 rm -rf）\n' "$pid"
+        printf 'GATE FAILED: check_lock (busy)\n'
+      } >&2
+      exit 2
+    fi
+    printf '回收过期锁：%s（pid=%s 仍存在，但锁龄 %ss 超过阈值 %ss；pid 可能已被无关进程复用）\n' \
+      "$LOCKDIR" "$pid" "$age" "$LOCK_STALE_SECONDS"
+  else
+    printf '回收过期锁：%s（持锁 pid=%s 已不存在，上一个门禁是被强杀的？）\n' "$LOCKDIR" "${pid:-?}"
+  fi
+
+  rm -rf "$LOCKDIR"
+  if mkdir "$LOCKDIR" 2>/dev/null; then
+    LOCK_HELD=1
+    printf '%s\n' "$$" > "$LOCKDIR/pid"
+    date +%s > "$LOCKDIR/epoch"
+    printf 'pid=%s cwd=%s mode=%s\n' "$$" "$ROOT" "$MODE" > "$LOCKDIR/who"
+    return 0
+  fi
+
+  {
+    printf 'LOCKED: 回收过期锁后仍抢不到（%s），可能有第三个实例刚抢到 → rc=2\n' "$LOCKDIR"
+    printf '  这不是脚本故障，是并发。重跑一次即可。\n'
+    printf 'GATE FAILED: check_lock (race)\n'
+  } >&2
+  exit 2
+}
 
 PASS=0; FAIL=0; SKIP=0
 FAILED_NAMES=()
@@ -61,9 +144,14 @@ step() {
   printf '  [%2s] %-20s %s\n' "$no" "$name" "$desc"
 }
 
+# 实际"被处理过"的步骤号（run_step 与 skip_step 都算：skip 在 --full 下也判红，
+# 它同样是"这一步被考虑过了"）。下面第 4 条断言要拿它和 --list 的声明对账。
+EXECUTED_NUMS=" "
+
 run_step() {
   local no="$1" name="$2" desc="$3"; shift 3
   local log="$LOGDIR/$name.log"
+  EXECUTED_NUMS="$EXECUTED_NUMS$no "
   printf '[%2s] %-20s ' "$no" "$name"
   if "$@" >"$log" 2>&1; then
     printf 'ok\n'
@@ -81,6 +169,7 @@ run_step() {
 
 skip_step() {
   local no="$1" name="$2" desc="$3"
+  EXECUTED_NUMS="$EXECUTED_NUMS$no "
   if [ "$MODE" = "full" ]; then
     printf '[%2s] %-20s FAIL (未实现，--full 下判红)\n' "$no" "$name"
     FAIL=$((FAIL+1)); FAILED_NAMES+=("$name")
@@ -118,6 +207,9 @@ if [ "$MODE" = "list" ]; then
   step 18 change_numbers      "变更编号台账（缺号/重号判红，行序错位只 WARN）"
   exit 0
 fi
+
+# --list 是只读的枚举，不该占锁；真正会动构建产物的是下面这些步骤。
+acquire_lock
 
 # ---- 1 构建 -----------------------------------------------------------------
 run_step 1 build "构建零警告" \
@@ -236,6 +328,34 @@ else
   # 判据 3 比**集合**不比行序：缺号 = 真的丢了记录（红），行序错位 = 抄写痕迹（WARN）。
   run_step 18 change_numbers "变更编号台账" \
     bash -c './scripts/check-change-numbers.sh --self-test && ./scripts/check-change-numbers.sh'
+fi
+
+# ---- 清单自证：--list 声明 == 实跑处理 -------------------------------------
+# 步数写死连续错过三次（15→16 步时没跟着改、加 17、加 18）。根因不是"忘了改那个数字"：
+# `--list` 的静态表与下面 run_step 的实跑清单**本来就是两份**，谁也不会记得同时改。
+# 所以这里不是"再改一次数字"，而是把两份对账：不一致就判红并打印差集。
+# 这条是"给门禁加门禁"——它挡住的正是过去几轮都发生过的那类漂移。
+# --fast 提前 return 到汇总，此时没跑全，不参与对账（否则它会天天红，然后被关掉）。
+if [ "${goto_summary:-0}" != "1" ]; then
+  DECLARED_NUMS=$(grep -oE '^[[:space:]]*step +[0-9]+' "$0" | grep -oE '[0-9]+' | LC_ALL=C sort -u)
+  ACTUAL_NUMS=$(printf '%s\n' $EXECUTED_NUMS | grep -E '^[0-9]+$' | LC_ALL=C sort -u)
+  DECLARED_COUNT=$(printf '%s\n' "$DECLARED_NUMS" | grep -cE '^[0-9]+$')
+  if [ "$DECLARED_NUMS" = "$ACTUAL_NUMS" ]; then
+    printf '[ *] %-20s ok（--list 与实跑一致：%s 步）\n' step_count "$DECLARED_COUNT"
+  else
+    printf '[ *] %-20s FAIL\n' step_count
+    echo "----------------------------------------------------------------"
+    echo "  --list 声明的步骤号与实跑处理的步骤号对不上。这通常意味着："
+    echo "    · 加了 run_step 但忘了在 --list 里加 step（或反之）"
+    echo "    · 步骤号写错/复用（本脚本约定：编号不复用）"
+    printf '  声明但没跑：%s\n' "$(comm -23 <(printf '%s\n' "$DECLARED_NUMS") <(printf '%s\n' "$ACTUAL_NUMS") | tr '\n' ' ')"
+    printf '  跑了但没声明：%s\n' "$(comm -13 <(printf '%s\n' "$DECLARED_NUMS") <(printf '%s\n' "$ACTUAL_NUMS") | tr '\n' ' ')"
+    echo "  两份清单必须逐号对齐；否则 --list / 文档 / CI 计数会各说各话。"
+    echo "----------------------------------------------------------------"
+    echo "GATE FAILED: step_count"
+    FAIL=$((FAIL+1)); FAILED_NAMES+=(step_count)
+    echo
+  fi
 fi
 
 # ---- 汇总 -------------------------------------------------------------------
