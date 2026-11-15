@@ -2,9 +2,6 @@ using OpenStore.Domain.Customers;
 
 namespace OpenStore.Application.Customers;
 
-/// <summary>会话认证成功后交给认证处理器/端点的管理员主体信息（不含敏感字段）。</summary>
-public sealed record AuthenticatedAdmin(Guid Id, string Email, string DisplayName, AdminRole Role);
-
 /// <summary>登录用例的结果（联合）。失败不抛异常，由端点映射为 401 / 423。</summary>
 public abstract record AdminLoginResult;
 

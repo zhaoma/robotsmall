@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using OpenStore.Application.Abstractions;
 using OpenStore.Application.Common;
 using OpenStore.Application.Customers;
+using OpenStore.Domain.Customers;
 
 namespace OpenStore.Api.Auth;
 
@@ -26,7 +27,8 @@ public sealed class SessionAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
     ILoggerFactory logger,
     UrlEncoder encoder,
-    IAdminSessionRepository sessions,
+    ISessionRepository sessions,
+    IAdminUserRepository users,
     IClock clock)
     : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
@@ -41,15 +43,25 @@ public sealed class SessionAuthenticationHandler(
             return AuthenticateResult.NoResult();
         }
 
-        var admin = await sessions
-            .AuthenticateAsync(SessionToken.Hash(token), clock.UtcNow, Context.RequestAborted)
-            .ConfigureAwait(false);
+        var tokenHash = SessionToken.Hash(token);
+        var now = clock.UtcNow;
 
-        if (admin is null)
+        var session = await sessions.FindAsync(tokenHash, Context.RequestAborted).ConfigureAwait(false);
+        if (session is null || !session.IsUsable(now) || session.ActorType != SessionActorType.Admin)
         {
-            Response.Cookies.Delete(SessionCookieName, new CookieOptions { Path = "/api/admin" });
-            return AuthenticateResult.NoResult();
+            return NoResultAndClearCookie();
         }
+
+        var admin = await users.GetByIdAsync(session.ActorId, Context.RequestAborted).ConfigureAwait(false);
+        if (admin is null || admin.Status != AdminUserStatus.Active)
+        {
+            return NoResultAndClearCookie();
+        }
+
+        // 滑动续期（节流的单条条件 UPDATE，见 ISessionRepository.TouchAsync 的约定）
+        await sessions
+            .TouchAsync(tokenHash, now, now + AdminSessionPolicy.IdleTimeout, now - Session.TouchThrottle, Context.RequestAborted)
+            .ConfigureAwait(false);
 
         var claims = new List<Claim>
         {
@@ -65,8 +77,12 @@ public sealed class SessionAuthenticationHandler(
         }
 
         var identity = new ClaimsIdentity(claims, SchemeName, ClaimTypes.Email, ClaimTypes.Role);
-        var principal = new ClaimsPrincipal(identity);
+        return AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName));
+    }
 
-        return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
+    private AuthenticateResult NoResultAndClearCookie()
+    {
+        Response.Cookies.Delete(SessionCookieName, new CookieOptions { Path = "/api/admin" });
+        return AuthenticateResult.NoResult();
     }
 }

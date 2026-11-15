@@ -750,6 +750,49 @@ paths:
         '403': { $ref: '#/components/responses/ForbiddenProblem' }
         '404': { $ref: '#/components/responses/NotFoundProblem' }
 
+  /api/admin/products/{id}/status:
+    patch:
+      operationId: adminChangeProductStatus
+      tags: [Admin.Catalog]
+      summary: 状态变更（**单向：回到 Draft**）
+      description: |
+        这是 `publish` / `archive` 之外**唯一**的状态写入口，且方向被收窄为 **`Active`/`Archived` → `Draft`**，
+        即"下架之后改回草稿继续编辑"。
+
+        为什么不许它把状态往前推（`Draft → Active`）：
+        - 上架要做 INV-P10 前置校验（≥1 启用变体、≥1 张图、≥1 分类、每个变体有价）。走这个端点等于绕开校验，
+          前台就会出现"没有价格的商品"——转化率黑洞，且无法事后区分是漏校验还是商家故意。
+        - 两个能自由切换状态的写入口，最后一定会出现"一个把商品改成 Active、另一个改成 Archived"的并发覆盖，
+          而状态变更必须同时维护 `PublishedAt`、缓存失效、sitemap，这些副作用只在上架/下架用例里做。
+
+        已 `Draft` 时重复调用幂等返回 `204`。目标值不是 `Draft` → `400 PRODUCT_STATUS_INVALID`（`details.allowedStatus=[Draft]`）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.write
+      x-csrf-required: true
+      x-direction: draft-only
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [Draft]
+                  description: '**只接受 Draft**。上架请用 `POST /{id}/publish`，下架请用 `POST /{id}/archive`'
+      responses:
+        '204': { description: 已回到草稿态（或本来就是草稿，幂等） }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
   /api/admin/products/{id}/variants/plan:
     post:
       operationId: adminPlanVariants
@@ -1872,10 +1915,9 @@ components:
 
     AdminProductListItem:
       type: object
-      required: [id, skuRoot, name, status, variantCount, totalOnHand, updatedAt]
+      required: [id, name, status, variantCount, totalOnHand, updatedAt]
       properties:
         id: { type: string }
-        skuRoot: { type: string, description: 'SKU 根（变体 SKU 的前缀），创建商品时给定' }
         name: { type: string, description: 默认语言名（回退后的展示名） }
         status: { $ref: '#/components/schemas/ProductStatus' }
         variantCount: { type: integer, minimum: 0 }
@@ -1894,12 +1936,8 @@ components:
 
     ProductCreateRequest:
       type: object
-      required: [skuRoot, names, categoryIds]
+      required: [names, categoryIds]
       properties:
-        skuRoot:
-          type: string
-          pattern: '^[A-Z0-9][A-Z0-9-]{0,31}$'
-          description: 'SKU 根；变体 SKU = `{skuRoot}-{轴值缩写}`，全局唯一'
         names: { $ref: '#/components/schemas/LocalizedText' }
         slugs:
           allOf:
@@ -1954,10 +1992,9 @@ components:
 
     AdminProductDetail:
       type: object
-      required: [id, skuRoot, status, names, slugs, categories, images, variants, axes, version, createdAt, updatedAt]
+      required: [id, status, names, slugs, categories, images, variants, axes, version, createdAt, updatedAt]
       properties:
         id: { type: string }
-        skuRoot: { type: string }
         status: { $ref: '#/components/schemas/ProductStatus' }
         publishedAt: { type: string, nullable: true, format: date-time, description: 首次上架时间（"新品"排序依据） }
         names: { $ref: '#/components/schemas/LocalizedText' }
@@ -2031,7 +2068,7 @@ components:
       required: [axisSignature, options]
       properties:
         variantId: { type: string, nullable: true, description: '`toAdd` 里为 null（还不存在）' }
-        sku: { type: string, nullable: true, description: '`toAdd` 里是**推导出的建议 SKU**（由 skuRoot + 轴值生成），落库前可改' }
+        sku: { type: string, nullable: true, description: '`toAdd` 里是**建议 SKU**（由轴值生成，供前端预填），商家可改后提交；服务端只校验格式与全局唯一，不维护 SKU 前缀规则' }
         axisSignature: { type: string, example: 'color=black|size=m' }
         options:
           type: array
@@ -2560,7 +2597,7 @@ components:
             code: VALIDATION_FAILED
             correlationId: 0HMZ7Q2K9V3T1
             errors:
-              skuRoot: ['SKU 根只能包含大写字母、数字与连字符']
+              names: ['默认语言名称必填']
               categoryIds: ['至少选择 1 个分类']
             details: null
 
@@ -2729,8 +2766,15 @@ x-doc-deltas:
       why: '同一事实两个写入口必然漂移（主图/变体状态最后谁生效取决于请求先后）。契约里只保留一个写路径'
     - id: D5
       where: docs/03 §5.4 `GET /api/admin/products/{id}`（"含成本价"）
-      contract: 'admin DTO 出现 `internalCode`/`internalNote`/库存三件套，**不出现成本价**'
-      why: '数据模型 `Product`/`ProductVariant` **没有成本列**。契约不能凭空造一个没有持久化的字段；若二期要成本，先加列再扩契约（新增字段是非破坏性变更）'
+      contract: 'admin DTO 出现 `internalCode`/`internalNote`/库存三件套，**不出现成本价**（主理人裁决 R3 已批准）'
+      why: |
+        **M1 明确去掉"成本价"，不是遗漏**：
+        1. 数据模型 `Product`/`ProductVariant` **没有成本列**（`Product` 只有 `InternalCode`，`ProductVariant` 只有 `AmountMinor/CompareAtMinor/Currency`）。
+        2. 契约不能凭空声明一个没有持久化的字段 —— 那会让"契约是单一真源"退化成"契约是一份愿望清单"，
+           前端按契约生成表单、后端无处存，最后变成"填了没反应"的静默失败。
+        3. 若 M1 之后确实需要成本/毛利（用于报表），正确顺序是：先加列（`ProductVariant.CostMinor` + `Currency` 同源）
+           → 再扩契约（**新增字段属非破坏性变更**，前端可继续忽略它）→ 最后做毛利视图。
+           反向顺序（先写契约后加列）会让契约与库在同一个里程碑内不一致，是最容易被评审放过去的一类债。
     - id: D6
       where: docs/03 §5.4 `POST /api/admin/products/{id}/variants/apply`（响应"最新变体列表"）
       contract: '响应对象 `{changed, applied{added,kept,disabled,deleted}, variants[]}`'
@@ -2752,9 +2796,17 @@ x-doc-deltas:
       contract: '`409 CATALOG_CATEGORY_NOT_EMPTY` + `details{childCount,productCount}`'
       why: '原文说了"要返回计数"但没给 code。前缀落在既有 `CATALOG_*` 族内，未新增前缀族'
     - id: D11
-      where: docs/03 §5.1 与 §2.1（`docs/03` §5.6.1 `maxOrderQuantity` = `min(99, available)`）
-      contract: '`maxOrderQuantity` 上限 99，取值由后端按 `min(99, available)` 给出'
-      why: '数据模型 §8.2 写作"= ORDER_LINE_QUANTITY_CAP（默认 10），与库存无关"，与 `docs/03` 冲突。本契约按 `docs/03`（本轮实现口径），**已在回报里请主理人裁决**（差异是 10 vs 99，影响"一次最多买几件"）'
+      where: docs/03 §5.1/§5.6.1 `maxOrderQuantity` = `min(99, available)` vs 数据模型 §8.2 "= ORDER_LINE_QUANTITY_CAP（默认 10），与库存完全无关"
+      contract: '`maxOrderQuantity = min(99, available)`（真实 available，不受截断影响），**主理人裁决 R1 已定稿**；数据模型 §8.2 该句作废'
+      why: |
+        R1 裁决理由（原文要点）：前台加购必须受可售量约束，否则用户能加 10 件而库存只有 3 件，
+        报错要等到下单那一步 —— 那时用户已经填完地址与支付方式，属于最贵的失败点。
+        `min(99, available)` 同时表达"单次最多 99"与"不超过现有库存"，也是 §5.6.1 的原意。
+
+        **与 `availableQuantity` 的口径区别（不许合并成一个字段）**：
+        - `availableQuantity`：`available ≤ 5` 给真实值，`> 5` 给 `null` —— 目的是**防竞品爬库存**。
+        - `maxOrderQuantity`：永远用**真实** `min(99, available)` —— 目的是**让加购可以被正确限制**。
+        若两者共用一个被截断的值，库存 50 件时加购会被限制成 5 件；若共用真实值，则精确库存被泄露。
     - id: D12
       where: 现有代码 `src/OpenStore.Api/Endpoints/Storefront/ProductEndpoints.cs`（`/api/v1/{locale}/products/{slug}`）
       contract: '`/api/storefront/products/{slug}?locale=zh`'
@@ -2807,11 +2859,15 @@ x-doc-deltas:
         定为**可选**而不是必填：M1 是单管理员场景，必填会给 curl/脚本与已有前端增加无收益的负担；
         回传即校验，让"想用的人"能拿到保护。这是明确的取舍，不是遗漏。
     - id: D21
-      where: docs/03 §5.4 商品列表返回 `skuRoot`，但数据模型 `Product` 表**没有 `SkuRoot` 列**
-      contract: '保留 `skuRoot`（创建时必填、列表回显），并已请 data-engineer 在实体↔表映射里补该列'
+      where: docs/03 §5.4 商品列表/创建返回并接收 `skuRoot`，但数据模型 `Product` 表**没有 `SkuRoot` 列**
+      contract: '**已按主理人裁决 R2 从契约删除 `skuRoot`**（列表项、创建请求、详情、plan 建议 SKU 全部不再出现该字段）'
       why: |
-        `skuRoot` 是"批量录商品时 SKU 的生成前缀"，从 `ProductVariant.Sku` 反推不可靠（商家可手改单个 SKU）。
-        契约先行（前端要用它做录入提示），列由 data-engineer 在任务 #2 落实；若最终不加列，本字段须改为商品详情里的派生字段并另议。
+        1. 数据模型没有这一列，而为它加列等于引入"建品时必须生成 SKU 前缀"的规则。
+        2. SKU 已经是**外部系统/物流/条码的唯一键**（数据模型 §3.1 明确「CSV 单向导入按 SKU 判重」）。
+           服务端自动派生前缀会与导入的 SKU 撞唯一键，而且撞了之后无法解释"这个前缀是哪套规则生成的"。
+        3. `InternalCode` 已承担"商家内部编码"职责，两个字段语义重叠，必然有人填一个忘一个。
+        落地方案：SKU 由商家填写，或由 `VariantMatrix` 按轴值**生成建议值**（前端预填、服务端只校验格式与全局唯一），
+        不引入任何服务端前缀规则。这是"能靠结构排除的错误，不靠纪律去防"的同类做法。
     - id: D22
       where: 主键类型三方不一致：数据模型 `Id = long`、现有代码 `Guid`、docs/03 示例 `01J8Z...`（ULID 形态）
       contract: '契约里所有 id 一律声明为**不透明字符串**（`type: string`，不约束格式），不做任何数值/ULID 语义承诺'

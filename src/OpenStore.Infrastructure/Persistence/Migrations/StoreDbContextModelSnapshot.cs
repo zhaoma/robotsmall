@@ -17,6 +17,61 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
 
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AdminUserRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EmailNormalized")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("FailedLoginCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("LastLoginAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("LockoutUntil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("PasswordChangedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PasswordHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Role")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Version")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EmailNormalized")
+                        .IsUnique()
+                        .HasDatabaseName("UX_AdminUser_EmailNormalized");
+
+                    b.ToTable("AdminUser", (string)null);
+                });
+
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -83,6 +138,56 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_ProductVariant_Product_AxisSignature");
 
                     b.ToTable("ProductVariant", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.SessionRecord", b =>
+                {
+                    b.Property<string>("TokenHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("AbsoluteExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ActorType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CsrfHash")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("IdleExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IpHash")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RevokeReason")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserAgentHash")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("TokenHash");
+
+                    b.HasIndex("AbsoluteExpiresAt")
+                        .HasDatabaseName("IX_Session_AbsoluteExpiresAt");
+
+                    b.HasIndex("ActorType", "ActorId")
+                        .HasDatabaseName("IX_Session_Actor");
+
+                    b.ToTable("Session", (string)null);
                 });
 
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductVariantRecord", b =>

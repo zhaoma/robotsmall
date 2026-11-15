@@ -15,7 +15,7 @@ namespace OpenStore.Application.Customers;
 /// </remarks>
 public sealed class AdminAuthService(
     IAdminUserRepository users,
-    IAdminSessionRepository sessions,
+    ISessionRepository sessions,
     IPasswordHasher passwordHasher,
     IClock clock)
 {
@@ -30,8 +30,7 @@ public sealed class AdminAuthService(
         }
 
         var now = clock.UtcNow;
-        var emailNormalized = AdminUser.NormalizeEmail(email);
-        var user = await users.FindByNormalizedEmailAsync(emailNormalized, ct).ConfigureAwait(false);
+        var user = await users.FindByEmailAsync(AdminUser.NormalizeEmail(email), ct).ConfigureAwait(false);
 
         if (user is null)
         {
@@ -54,12 +53,12 @@ public sealed class AdminAuthService(
         if (!passwordHasher.Verify(user.PasswordHash, request.Password))
         {
             user.RegisterFailedLogin(now);
-            await users.UpdateAsync(user, ct).ConfigureAwait(false);
+            await users.SaveAsync(user, ct).ConfigureAwait(false);
             return new AdminLoginFailure(AdminLoginFailureReason.InvalidCredentials, null);
         }
 
         user.RegisterSuccessfulLogin(now);
-        await users.UpdateAsync(user, ct).ConfigureAwait(false);
+        await users.SaveAsync(user, ct).ConfigureAwait(false);
 
         var token = SessionToken.Generate();
         var session = Session.Create(
@@ -70,7 +69,7 @@ public sealed class AdminAuthService(
             AdminSessionPolicy.IdleTimeout,
             AdminSessionPolicy.AbsoluteTimeout);
 
-        await sessions.AddAsync(session, ct).ConfigureAwait(false);
+        await sessions.CreateAsync(session, ct).ConfigureAwait(false);
 
         return new AdminLoginSuccess(
             user.Id,
@@ -89,6 +88,6 @@ public sealed class AdminAuthService(
             return Task.CompletedTask;
         }
 
-        return sessions.RevokeAsync(tokenHash, clock.UtcNow, ct);
+        return sessions.RevokeAsync(tokenHash, clock.UtcNow, SessionRevokeReason.Logout, ct);
     }
 }

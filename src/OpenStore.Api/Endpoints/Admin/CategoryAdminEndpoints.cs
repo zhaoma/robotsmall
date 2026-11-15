@@ -18,7 +18,7 @@ public static class CategoryAdminEndpoints
         // 但无实体与持久化），本端点只定义契约并返回空列表，前端按"无分类"渲染空态。M1 补分类聚合。
         group.MapGet("", () => Results.Ok(Array.Empty<AdminCategoryNodeDto>()))
             .WithName("AdminListCategories")
-            .RequireAuthorization(Permissions.CategoryRead)
+            .RequireAuthorization(Permissions.TaxonomyRead)
             .Produces<AdminCategoryNodeDto[]>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);

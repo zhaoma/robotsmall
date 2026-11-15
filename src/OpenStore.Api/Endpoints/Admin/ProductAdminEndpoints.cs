@@ -32,7 +32,7 @@ public static class ProductAdminEndpoints
             return Results.Ok(result);
         })
         .WithName("AdminListProducts")
-        .RequireAuthorization(Permissions.ProductRead)
+        .RequireAuthorization(Permissions.CatalogRead)
         .Produces<AdminProductListResponse>(StatusCodes.Status200OK)
         .ProducesProblem(StatusCodes.Status400BadRequest)
         .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -48,7 +48,7 @@ public static class ProductAdminEndpoints
             return result is null ? Results.NotFound() : Results.Ok(result);
         })
         .WithName("AdminGetProduct")
-        .RequireAuthorization(Permissions.ProductRead)
+        .RequireAuthorization(Permissions.CatalogRead)
         .Produces<AdminProductDetailDto>(StatusCodes.Status200OK)
         .ProducesProblem(StatusCodes.Status400BadRequest)
         .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -65,7 +65,7 @@ public static class ProductAdminEndpoints
             return Results.Created($"/api/admin/products/{result.Id}", result);
         })
         .WithName("AdminCreateProduct")
-        .RequireAuthorization(Permissions.ProductCreate)
+        .RequireAuthorization(Permissions.CatalogWrite)
         .Produces<AdminProductDetailDto>(StatusCodes.Status201Created)
         .ProducesProblem(StatusCodes.Status400BadRequest)
         .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -82,7 +82,7 @@ public static class ProductAdminEndpoints
             return result is null ? Results.NotFound() : Results.Ok(result);
         })
         .WithName("AdminUpdateProduct")
-        .RequireAuthorization(Permissions.ProductEdit)
+        .RequireAuthorization(Permissions.CatalogWrite)
         .Produces<AdminProductDetailDto>(StatusCodes.Status200OK)
         .ProducesProblem(StatusCodes.Status400BadRequest)
         .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -101,7 +101,7 @@ public static class ProductAdminEndpoints
             return result is null ? Results.NotFound() : Results.Ok(result);
         })
         .WithName("AdminChangeProductStatus")
-        .RequireAuthorization(Permissions.ProductWrite)
+        .RequireAuthorization(Permissions.CatalogWrite)
         .Produces<AdminProductStatusDto>(StatusCodes.Status200OK)
         .ProducesProblem(StatusCodes.Status400BadRequest)
         .ProducesProblem(StatusCodes.Status401Unauthorized)

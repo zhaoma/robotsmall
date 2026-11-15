@@ -4,13 +4,17 @@ using Microsoft.EntityFrameworkCore;
 using OpenStore.Api.Auth;
 using OpenStore.Api.Endpoints;
 using OpenStore.Api.Endpoints.Admin;
+using OpenStore.Api.Endpoints.AdminAuth;
 using OpenStore.Api.Endpoints.Storefront;
 using OpenStore.Api.Middlewares;
+using OpenStore.Application.Abstractions;
 using OpenStore.Application.Catalog.Commands;
 using OpenStore.Application.Catalog.Queries;
 using OpenStore.Application.Common;
+using OpenStore.Application.Customers;
 using OpenStore.Infrastructure.Persistence;
 using OpenStore.Infrastructure.Persistence.Repositories;
+using OpenStore.Infrastructure.Security;
 
 // ============================================================================
 // OpenStore.Api —— 组合根（composition root）。
@@ -36,22 +40,27 @@ builder.Services.AddDbContext<StoreDbContext>(options => options.UseSqlite(conne
 builder.Services.AddScoped<IProductRepository, SqliteProductRepository>();
 builder.Services.AddScoped<IProductAdminRepository, SqliteProductAdminRepository>();
 builder.Services.AddScoped<IAdminProductQuery, SqliteAdminProductQuery>();
+builder.Services.AddScoped<IAdminUserRepository, SqliteAdminUserRepository>();
+builder.Services.AddScoped<ISessionRepository, SqliteSessionRepository>();
+builder.Services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
+builder.Services.AddSingleton<IClock, UtcClock>();
 
 // ---- 应用层用例 ----
 builder.Services.AddScoped<StorefrontProductQueryService>();
 builder.Services.AddScoped<AdminProductQueryService>();
 builder.Services.AddScoped<ProductAdminService>();
+builder.Services.AddScoped<AdminAuthService>();
 
 // ---- 认证/授权 ----
-// ⚠ M0 占位：DevAuthHandler 信任 X-Dev-Perms 请求头。M1 换成 HttpOnly Cookie + DB Session
-//   （SessionAuthenticationHandler），并删除此处 AddScheme 与 Auth/DevAuthHandler.cs。
+// 管理端会话认证：HttpOnly Cookie（os_admin_sid）+ DB Session 校验（后端设计 §6.1/§6.3）。
+// 已删除 M0 的 DevAuthHandler（信任 X-Dev-Perms 头的占位实现）。
 builder.Services
-    .AddAuthentication(DevAuthHandler.SchemeName)
-    .AddScheme<AuthenticationSchemeOptions, DevAuthHandler>(
-        DevAuthHandler.SchemeName,
+    .AddAuthentication(SessionAuthenticationHandler.SchemeName)
+    .AddScheme<AuthenticationSchemeOptions, SessionAuthenticationHandler>(
+        SessionAuthenticationHandler.SchemeName,
         configureOptions: null);
 
-// 权限码即策略名：端点写 RequireAuthorization(Permissions.ProductWrite)，
+// 权限码即策略名：端点写 RequireAuthorization(Permissions.Xxx)，
 // 这里按 Permissions.All 逐个注册策略，二者由 Category=Authorization 门禁强制同步（防死码）。
 builder.Services.AddAuthorization(options =>
 {
@@ -59,7 +68,7 @@ builder.Services.AddAuthorization(options =>
     {
         options.AddPolicy(permission, policy => policy
             .RequireAuthenticatedUser()
-            .RequireClaim(DevAuthHandler.PermissionClaimType, permission));
+            .RequireClaim(Permissions.PermissionClaimType, permission));
     }
 });
 
@@ -74,6 +83,7 @@ app.MapHealthEndpoints();
 app.MapStorefrontProductEndpoints();
 app.MapAdminProductEndpoints();
 app.MapAdminCategoryEndpoints();
+app.MapAdminAuthEndpoints();
 
 // 开发期自动迁移：让 `dotnet run` 之后 curl 就能拿到 200/404 而不是 500（"no such table"）。
 // 生产环境**不**自动迁移：迁移由部署流水线执行 SQL 脚本（部署文档 §5），
@@ -83,6 +93,14 @@ if (app.Environment.IsDevelopment() || app.Configuration.GetValue("Database:Auto
     await using var scope = app.Services.CreateAsyncScope();
     var db = scope.ServiceProvider.GetRequiredService<StoreDbContext>();
     await db.Database.MigrateAsync();
+}
+
+// 开发期种子管理员：Session 认证需要一个可登录的入口账号（生产由安装向导创建，见后端设计 §6.8）。
+if (app.Environment.IsDevelopment())
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var devPassword = app.Configuration["Auth:DevAdminPassword"] ?? "ChangeMe123!";
+    await DevAdminSeeder.SeedAsync(scope.ServiceProvider, devPassword, CancellationToken.None);
 }
 
 app.Run();
