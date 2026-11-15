@@ -51,7 +51,7 @@ ONLY=""
 case "${1:-}" in
   --only=*) ONLY="${1#--only=}" ;;
   --list)
-    grep -oE 'V[0-9]+ (layering|bounded_contexts|authorization|storefront_dto|templates|themes|migrations|domain_tests)' "$0" \
+    grep -oE 'V[0-9]+ (layering|bounded_contexts|authorization|storefront_dto|templates|themes|migrations|domain_tests|doc_version_refs)' "$0" \
       | sort -u -V
     exit 0 ;;
   "") ;;
@@ -218,6 +218,7 @@ run_injection() {
 g_arch()   { dotnet test tests/OpenStore.ArchitectureTests --nologo --filter "Category=$1" --logger "console;verbosity=detailed"; }
 g_domain() { dotnet test tests/OpenStore.Domain.Tests --nologo --logger "console;verbosity=detailed"; }
 g_tools()  { dotnet run --project tools/OpenStore.Tools -- "$1"; }
+g_doc()    { ./scripts/check-doc-version-refs.sh; }
 
 say "== 注入清单 =="
 
@@ -462,6 +463,50 @@ PY
 fi
 
 # -----------------------------------------------------------------------------
+# V12 文档版本号：往正文插一句"依据某版本定稿"
+#
+# 这条注入守的是 check.sh 步骤 15（scripts/check-doc-version-refs.sh）。
+# 它属于"声明层"改动：不改任何逻辑，只往正文加一行引用 —— 正是规则要治的形态。
+#
+# 为什么必须从这个方向注入：脚本的豁免是**结构化**的（文件头 / 变更记录 / 附录 B /
+# 作废台账），所以"正文里加一句版本号"必须红、"追溯区里写版本号"必须不红。
+# 只测前者会漏掉后者，只测后者会漏掉前者；本条只覆盖前者，后者由 --list-exempt
+# 的输出人工审阅（把豁免区间打出来看，比断言"某行确实被豁免"更难做假）。
+#
+# 靶点选 docs/02 的一段**确定性正文**（SEO 字段口径那节的开头），锚点是一句
+# 完整的中文短句而不是行号 —— 行号会随编辑漂移，短句在可预见的时间内有意义。
+# -----------------------------------------------------------------------------
+if [ -z "$ONLY" ] || [ "$ONLY" = "V12" ]; then
+  F=$(find_one "docs/02-数据模型.md")
+  if [ -z "$F" ]; then
+    require_target V12 doc_version_refs "docs/02-数据模型.md"
+  elif require_anchor V12 doc_version_refs "$F" "核心规则：每档只用一种信号"; then
+    snapshot "$F"
+    python3 - "$F" <<'PY'
+import sys
+p=sys.argv[1]
+lines=open(p,encoding='utf-8').read().split('\n')
+anchor='核心规则：每档只用一种信号'
+for i,l in enumerate(lines):
+    if anchor in l:
+        # 插在锚点行之后，保持"正文中部"而不是文件尾（文件尾可能落在豁免区里）
+        lines.insert(i+1, '> （本节结论依据需求 v1.99 定稿并锁定。）')
+        break
+else:
+    sys.exit(3)
+open(p,'w',encoding='utf-8').write('\n'.join(lines))
+PY
+    if [ $? -ne 0 ]; then
+      say "  V12 ANCHOR SHAPE MISSING：docs/02 里找不到 SEO 字段口径那节的开头句，注入未生效。"
+      FAIL=$((FAIL+1)); FAILED+=("V12:anchor-shape")
+    else
+      run_injection V12 doc_version_refs "DOC VERSION REF|引用了 v1.99" g_doc
+    fi
+    restore_files
+  fi
+fi
+
+# -----------------------------------------------------------------------------
 # 收口：**执行条数必须等于声明条数**
 #
 # 前面每个"静默跳过"都被改成了记账，但没有会计对总量：如果将来有人删掉一整段 if
@@ -470,7 +515,7 @@ fi
 # 声明清单取自 --list 的同一个正则，所以"列出来的"与"要求执行的"不会各自演化。
 # -----------------------------------------------------------------------------
 if [ -z "$ONLY" ]; then
-  PLANNED=$(grep -oE 'V[0-9]+ (layering|bounded_contexts|authorization|storefront_dto|templates|themes|migrations|domain_tests)' "$0" \
+  PLANNED=$(grep -oE 'V[0-9]+ (layering|bounded_contexts|authorization|storefront_dto|templates|themes|migrations|domain_tests|doc_version_refs)' "$0" \
             | sort -u | wc -l | tr -d ' ')
   EXECUTED=$((PASS + FAIL))
   if [ "$EXECUTED" -ne "$PLANNED" ]; then

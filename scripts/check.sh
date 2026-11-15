@@ -4,7 +4,7 @@
 #
 # 用法：
 #   ./scripts/check.sh            # 跑当前里程碑已实现的全部步骤
-#   ./scripts/check.sh --full     # 跑全部 14 步；未实现的步骤判红（不允许"未实现=通过"）
+#   ./scripts/check.sh --full     # 跑全部 15 步；未实现的步骤判红（不允许"未实现=通过"）
 #   ./scripts/check.sh --fast     # 只跑 1~6 步（提交前用，目标 < 90 秒）
 #   ./scripts/check.sh --list     # 只列步骤，不执行
 #
@@ -112,6 +112,7 @@ if [ "$MODE" = "list" ]; then
   step 12 e2e_smoke           "E2E 冒烟 + 密钥扫描 + 漏洞"
   step 13 sql_count           "分类页首屏 SQL 条数 <= 8"
   step 14 seo_matrix          "索引控制矩阵 S1~S11"
+  step 15 doc_version_refs    "docs 正文不得出现需求基线版本号"
   exit 0
 fi
 
@@ -183,6 +184,13 @@ else
   skip_step 12 e2e_smoke      "M4 引入（需真实支付通道与前端）"
   skip_step 13 sql_count      "M2 引入（需查询拦截器）"
   skip_step 14 seo_matrix     "M3 引入（scripts/verify-seo-matrix.sh 已存在，待前端落地后接真站）"
+
+  # ---- 15 文档版本号引用 ----------------------------------------------------
+  # 放在最后：它是纯文本扫描，零依赖、秒级；失败信息自带行号与上下文，
+  # 不需要像其他步骤那样靠日志尾巴定位。
+  # 判据在 docs/01 的「结构规则 3」，机器实现在 scripts/check-doc-version-refs.sh。
+  run_step 15 doc_version_refs "文档版本号引用" \
+    ./scripts/check-doc-version-refs.sh
 fi
 
 # ---- 汇总 -------------------------------------------------------------------
