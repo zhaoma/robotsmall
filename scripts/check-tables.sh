@@ -199,8 +199,13 @@ def judge_file(path, rel):
     for first, last, d in runs:
         span = '' if first == last else '（连续 %d 行，%d-%d）' % (last - first + 1, first + 1, last + 1)
         if is_sep(info(first)[1]):
+            # 症状在这一行（分隔行），病因多半在上一行的**行末**：渲染器把「段落 + 表头」
+            # 当成同一段，于是整块（含后面几行）一起降级为文本。不点出上一行，人会去改分隔行。
+            hint = ''
+            if first > 0 and lines[first - 1].strip():
+                hint = '；病因多半在第 %d 行的行末（该行以正文开头、结尾却粘着表头），排查从那里开始' % first
             fails.append(('T1', first + 1,
-                          '分隔行前面不是表头行 → 这张表没有起点（表头多半被粘在段落同一行末尾）%s' % span))
+                          '分隔行前面不是表头行 → 这张表没有起点%s%s' % (span, hint)))
         else:
             fails.append(('T1', first + 1,
                           '孤行（前一行不是同一引用层级 [%d] 内的表格行）→ 会被渲染成带竖线的普通文本%s'
