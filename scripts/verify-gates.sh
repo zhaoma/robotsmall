@@ -473,20 +473,24 @@ fi
 # 只测前者会漏掉后者，只测后者会漏掉前者；本条只覆盖前者，后者由 --list-exempt
 # 的输出人工审阅（把豁免区间打出来看，比断言"某行确实被豁免"更难做假）。
 #
-# 靶点选 docs/02 的一段**确定性正文**（SEO 字段口径那节的开头），锚点是一句
-# 完整的中文短句而不是行号 —— 行号会随编辑漂移，短句在可预见的时间内有意义。
+# 靶点选 docs/05 的一段**确定性正文**（"本文不再复制 AC-11 判定正文"那句所在小节），
+# 锚点用完整中文短句而不是行号 —— 行号会随编辑漂移，短句在可预见的时间内有意义。
+#
+# 靶点还必须是**当前没人并行编辑的文件**：snapshot 会断言 git 工作树干净，
+# 别人正在改这个文件时脚本会以退出码 3 停下（这是对的行为，不是缺陷）。
+# 施工期若这条注入频繁报"靶点有未提交改动"，换一个空闲文档即可，**不要删掉这条注入**。
 # -----------------------------------------------------------------------------
 if [ -z "$ONLY" ] || [ "$ONLY" = "V12" ]; then
-  F=$(find_one "docs/02-数据模型.md")
+  F=$(find_one "docs/05-部署运维.md")
   if [ -z "$F" ]; then
-    require_target V12 doc_version_refs "docs/02-数据模型.md"
-  elif require_anchor V12 doc_version_refs "$F" "核心规则：每档只用一种信号"; then
+    require_target V12 doc_version_refs "docs/05-部署运维.md"
+  elif require_anchor V12 doc_version_refs "$F" "本文不再复制 AC-11 的判定正文"; then
     snapshot "$F"
     python3 - "$F" <<'PY'
 import sys
 p=sys.argv[1]
 lines=open(p,encoding='utf-8').read().split('\n')
-anchor='核心规则：每档只用一种信号'
+anchor='本文不再复制 AC-11 的判定正文'
 for i,l in enumerate(lines):
     if anchor in l:
         # 插在锚点行之后，保持"正文中部"而不是文件尾（文件尾可能落在豁免区里）
@@ -497,7 +501,7 @@ else:
 open(p,'w',encoding='utf-8').write('\n'.join(lines))
 PY
     if [ $? -ne 0 ]; then
-      say "  V12 ANCHOR SHAPE MISSING：docs/02 里找不到 SEO 字段口径那节的开头句，注入未生效。"
+      say "  V12 ANCHOR SHAPE MISSING：docs/05 里找不到 AC-11 判定正文那句，注入未生效。"
       FAIL=$((FAIL+1)); FAILED+=("V12:anchor-shape")
     else
       run_injection V12 doc_version_refs "DOC VERSION REF|引用了 v1.99" g_doc
