@@ -11,6 +11,8 @@
 #       --archived-moved /zh/products/old-sku \
 #       --archived-gone  /zh/products/dead-sku \
 #       --archived-gone-from /zh/products/dead-sku-v1   # 同一商品的历史 slug，也必须是 410
+#       --moved-from /zh/products/kettle-v1 \
+#       --moved-to   /zh/products/kettle         # 在售商品改过 slug：旧 URL 必须 301 到新 URL
 #       --out-of-stock   /zh/products/sold-out   # 不给则从 sitemap 自动找
 #   ./scripts/verify-seo-matrix.sh --self-test     # fail-before-pass 自证（本地 mock，不连真站）
 #
@@ -28,6 +30,8 @@ TIMEOUT="${TIMEOUT:-10}"
 ARCH_MOVED="${ARCHIVED_MOVED_PATH:-}"
 ARCH_GONE="${ARCHIVED_GONE_PATH:-}"
 ARCH_GONE_FROM="${ARCHIVED_GONE_FROM_PATH:-}"
+MOVED_FROM="${MOVED_FROM_PATH:-}"
+MOVED_TO="${MOVED_TO_PATH:-}"
 OOS="${OUT_OF_STOCK_PATH:-}"
 
 while [ $# -gt 0 ]; do
@@ -38,6 +42,8 @@ while [ $# -gt 0 ]; do
     --archived-moved)  ARCH_MOVED="$2"; shift 2 ;;
     --archived-gone)   ARCH_GONE="$2"; shift 2 ;;
     --archived-gone-from) ARCH_GONE_FROM="$2"; shift 2 ;;
+    --moved-from)      MOVED_FROM="$2"; shift 2 ;;
+    --moved-to)        MOVED_TO="$2"; shift 2 ;;
     --out-of-stock)    OOS="$2"; shift 2 ;;
     -h|--help)         sed -n '2,30p' "$0"; exit 0 ;;
     -*)                echo "未知参数: $1" >&2; exit 2 ;;
@@ -353,6 +359,50 @@ run_matrix(){
     *)   fail "S9 历史 slug 状态码错" "http=${P_STATUS}（期望 410，且不得 301）url=$BASE$ARCH_GONE_FROM" ;;
   esac
 
+  # ---- S9 规则 4：在售商品改过 slug → 旧 URL 必须 301 到新 URL
+  #
+  # 这一格是上面那条「历史 slug 不得带 Location」的**对照组**，缺了它那条判据是有洞的：
+  # 「不得输出 Location」是纯禁止项，而 **SlugHistory 完全不实现时，历史 slug 会返回 404 ——
+  # 404 本来就不带 Location**，于是那条断言一路绿，看起来"验过了"。
+  # 凡「X 时不得输出 Y」，必须配一条「Z 时必须输出 Y」，且对照组要来自同一条件为真的另一侧：
+  # 这里两个对象**入口形态完全相同**（都是 SlugHistory 里的旧地址，走同一个 resolver），
+  # 唯一的差别是**实体当前状态**（Active / Archived）。这正是"先解析实体、再按状态分派"那条
+  # 规则的两个分支，因此必须成对验 —— 分裂成两个编号，改一处忘另一处，而它们本来是一个 if/else。
+  echo "-- S9 规则4 slug 变更（在售：旧 URL → 301 新 URL）"
+  if [ -z "$MOVED_FROM" ] || [ -z "$MOVED_TO" ]; then
+    echo "PRECONDITION: 缺改过 slug 的在售商品 fixture（--moved-from / --moved-to 两个都要给）。缺 fixture = 未验证 = AC-11 不通过" >&2
+    return 2
+  fi
+  _probe_one "$BASE$MOVED_FROM"
+  case "$P_STATUS" in
+    301) pass "S9 规则4 旧 slug → 301" ;;
+    200) fail "S9 规则4 旧 slug 仍返回 200" "旧地址还在提供内容 = 同一商品两个 URL 并存 = 重复内容，canonical 也救不了（两个 URL 都自指）。必须 301 到新 slug" ;;
+    404) fail "S9 规则4 旧 slug 返回 404" "SlugHistory 未实现或未登记：旧外链全部断掉。这是「规则 4 只写了禁止项」时最典型的假绿形态——404 本来就不带 Location，上面那条「不得带 Location」照样绿。必须 301 到新 slug" ;;
+    *)   fail "S9 规则4 旧 slug 状态码错" "http=${P_STATUS}（期望 301）url=$BASE${MOVED_FROM}" ;;
+  esac
+  if [ "$P_STATUS" = "301" ]; then
+    case "$P_LOC" in
+      "$BASE"*) pass "S9 规则4 301 的 Location 是绝对 URL（来源 PublicSiteUrl）" ;;
+      "") fail "S9 规则4 301 缺 Location 头" "301 没有 Location：爬虫不知道该去哪，权重直接落空" ;;
+      *) fail "S9 规则4 301 的 Location 不是绝对 URL" "契约要求 Location 一律绝对 URL 且来源 PublicSiteUrl（禁止读请求 Host）。实际=${P_LOC}" ;;
+    esac
+    # 目标必须**就是新 slug**，不是"某个 200 的页面"：跳到别处等于把已积累的权重指向错的页面，
+    # 而落点照样 200、日志里看不出任何异常。尾斜杠两侧都算对（那是同一个 URL 的两种写法）。
+    case "${P_LOC#"$BASE"}" in
+      "${MOVED_TO%/}"|"${MOVED_TO%/}/") pass "S9 规则4 301 指向新 slug（${MOVED_TO}）" ;;
+      *) fail "S9 规则4 301 目标不是新 slug" "Location=${P_LOC}（期望 ${MOVED_TO}）。跳到别处时落点可能仍返回 200，只有这条能发现" ;;
+    esac
+    case "$P_LOC" in
+      "$BASE"*)
+        _probe_one "$P_LOC"
+        if [ "$P_STATUS" = "200" ]; then
+          pass "S9 规则4 301 落点可访问（200）"
+        else
+          fail "S9 规则4 301 落点不可访问（${P_STATUS}）" "301 指对了、目标页却 ${P_STATUS}：旧外链跟过去拿到错误页，权重无处落地。Location=${P_LOC}"
+        fi ;;
+    esac
+  fi
+
   # ---- S10 在售但库存 0：200 + OutOfStock + 留在 sitemap；归档不在 sitemap
   echo "-- S10 缺货商品页（200 + OutOfStock + 留在 sitemap）"
   if [ -z "$OOS" ]; then
@@ -416,6 +466,8 @@ OOSP  = "/zh/products/sold-out"      # 在售、库存 0
 ARCHM = "/zh/products/old-sku"       # 归档、有替代分类
 ARCHG = "/zh/products/dead-sku"      # 归档、无替代
 ARCHGF = "/zh/products/dead-sku-v1"  # 上面那个商品的历史 slug（改名前的旧地址），也必须 410
+MVDT  = "/zh/products/kettle"        # 在售商品，改过 slug
+MVDF  = "/zh/products/kettle-v1"     # 它改名前的旧地址，必须 301 到 MVDT
 NOI = ["/zh/cart", "/zh/checkout", "/zh/account", "/zh/orders/track",
        "/setup", "/zh/_preview", "/zh/search"]   # 前缀匹配，同 NOINDEX_PATTERNS
 
@@ -454,6 +506,20 @@ def route(path, q):
         if MODE == "v10":  # 注入：先查 SlugHistory 再判状态 → 历史 slug 被 301 到新 slug（301 → 410 两跳）
             return 301, "text/html", "", {"Location": BASE + ARCHG}
         return 410, "text/html", page(""), {}
+    if path == MVDF:
+        # 规则 4 的对照组。三种坏法各自对应一个注入，且**都不是"状态码错"那一条能抓的**：
+        #   v13 404 = SlugHistory 干脆没实现（禁止项判据看不出来，这是加这一格的真正理由）
+        #   v14 200 = 旧地址还活着（重复内容，canonical 两面都自指，救不了）
+        #   v15 301 但指向别处（落点照样 200，只有"目标必须等于新 slug"能抓）
+        if MODE == "v13":
+            return 404, "text/html", page(""), {}
+        if MODE == "v14":
+            return 200, "text/html", page(canon(MVDF)), {}
+        if MODE == "v15":
+            return 301, "text/html", "", {"Location": BASE + "/zh/products/wrong-target"}
+        return 301, "text/html", "", {"Location": BASE + MVDT}
+    if path == MVDT:
+        return 200, "text/html", page(canon(MVDT) + ld("InStock")), {}
     if path == OOSP:
         if MODE == "v5":                           # 注入：库存 0 返 404
             return 404, "text/html", page(""), {}
@@ -504,6 +570,7 @@ with socketserver.TCPServer(("127.0.0.1", PORT), H) as srv:
 PY
   echo "== fail-before-pass 自证（本地 mock，不连真站）"
   ARCHM="/zh/products/old-sku"; ARCHG="/zh/products/dead-sku"; ARCHGF="/zh/products/dead-sku-v1"; OOSF="/zh/products/sold-out"
+  MVDF="/zh/products/kettle-v1"; MVDT="/zh/products/kettle"
   local mode desc want port rc out pid i sfail=0 ninj=0 first
   # 用 heredoc 逐行读，不用空格分隔的字符串——描述里有空格会被 for 拆散
   while IFS='|' read -r mode desc want; do
@@ -517,11 +584,15 @@ PY
     done
     BASE="http://127.0.0.1:${port}"
     ARCH_MOVED="$ARCHM"; ARCH_GONE="$ARCHG"; ARCH_GONE_FROM="$ARCHGF"; OOS="$OOSF"
+    MOVED_FROM="$MVDF"; MOVED_TO="$MVDT"
     # v8 故意不给 --out-of-stock，让判据自己去 sitemap 里找；v8 的 sitemap 里找不到。
     [ "$mode" = "v8" ] && OOS=""
     # v11：站点完全正常，只是没给"历史 slug"这个 fixture —— 必须走 PRECONDITION，
     # 而不是"没传就跳过这条断言"。后者正是"缺 fixture 变假绿"的同一条通道。
     [ "$mode" = "v11" ] && ARCH_GONE_FROM=""
+    # v12：站点完全正常，只是没给"改过 slug 的在售商品"这对 fixture —— 同 v11 的理由：
+    # 缺 fixture 必须是 rc=2，而不是"没传就跳过这一格"。
+    [ "$mode" = "v12" ] && MOVED_FROM=""
     # `< /dev/null` 不是可选项：清零时 stdin 正是下面那个 CASES heredoc，
     # 判据里任何一处 read 都会静默吃掉后面的用例（表现为"少跑几条还报绿"）。
     run_matrix > "$tmp/out.$mode" 2>&1 < /dev/null; rc=$?
@@ -550,11 +621,12 @@ PY
     fi
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
   # 注入编号空间说明（防止下一个人误以为跨文件同名同义）：
-  #   v1~v10 是**本文件自证空间的编号**，与 docs/03 §9.2 的 V1~V12（后端/架构门禁注入，
+  #   v1~v15 是**本文件自证空间的编号**，与 docs/03 §9.2 的 V1~V12（后端/架构门禁注入，
   #   例如 V9 = storefront DTO 不泄露内部字段）**毫无关系**。跨文件同名不同义是允许的，
   #   但两边都必须写明，否则会有人以为"V9 已经有人做了"。
   #   v9  = 归档 301 的落点返回 404（红在"落点可访问"那条，不是状态码那条）
   #   v10 = 归档商品的历史 slug 被 301 到新 slug（红在"不得带 Location"那条）
+  #   v13~v15 = 规则 4 的三种坏法，各自红在不同的断言上（见 mock 里 MVDF 分支的注释）
   done <<'CASES'
 ok|正确样本（六档全对）|-
 v1|robots 加 Disallow:/*?*|S7
@@ -568,6 +640,10 @@ v8|缺 out-of-stock fixture（sitemap 里找不到 OutOfStock 商品）|PRECONDI
 v9|归档 301 落点 404（Location 指向不存在的分类页）|S9 301 落点不可访问
 v10|归档商品的历史 slug 被 301 到新 slug（301→410 两跳）|S9 历史 slug 不得带 Location
 v11|缺 --archived-gone-from（历史 slug fixture 未给）|PRECONDITION
+v12|缺 --moved-from（改过 slug 的在售商品 fixture 未给）|PRECONDITION
+v13|SlugHistory 未实现：旧 slug 返 404（禁止项判据看不出来）|S9 规则4 旧 slug 返回 404
+v14|旧 slug 仍返 200（同一商品两个 URL 并存）|S9 规则4 旧 slug 仍返回 200
+v15|旧 slug 301 到错的页面（落点仍 200，只有目标比对能抓）|S9 规则4 301 目标不是新 slug
 CASES
   rm -rf "$tmp"
   [ "$sfail" -eq 0 ] && { echo "== 自证通过：正样本绿；${ninj} 个注入各自红在预期断言上"; return 0; }
@@ -579,5 +655,5 @@ trap 'rm -f "$HF" "$BF"' EXIT
 
 if [ "${SELF_TEST}" = "1" ]; then self_test; exit $?; fi
 
-[ -n "$BASE" ] || { echo "用法: $0 https://shop.example.com [--locale en] [--archived-moved P --archived-gone P --out-of-stock P] | --self-test" >&2; exit 2; }
+[ -n "$BASE" ] || { echo "用法: $0 https://shop.example.com [--locale en] [--archived-moved P --archived-gone P --archived-gone-from P --moved-from P --moved-to P --out-of-stock P] | --self-test" >&2; exit 2; }
 run_matrix; exit $?
