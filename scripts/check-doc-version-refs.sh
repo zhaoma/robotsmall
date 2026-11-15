@@ -7,11 +7,12 @@
 # 状态——与"结论写两处"是同一个病。AC 编号语义稳定、W 编号永不复用，版本号永远在动。
 # 本脚本拦 `v1.\d+` 的全部形态，**包括 `v1.10 #47` 这种"看着像引用变更条目"的写法**（不给 # 开例外）。
 #
-# 豁免按【行区间】而不是【文件】——否则 01 自己的正文违规会被整文件漏掉：
-#   1) 01 文件头（首条 `> **vX 变更` 之前）—— 那里的版本号是主语，不是引用
-#   2) 01 变更记录区（首条 `> **vX 变更` 起，到 `> **本文的写法约定` 之前）
-#   3) 01 附录 B（`## 附录 B` 之后）—— 那里的版本号是被描述的对象
-# 其余所有 .md（00/02/03/04/05/06 与 architecture/）**全文视为正文**。
+# 豁免按【结构章节】而不是【文件】或【行号硬编码】——否则要么 01 自己的正文违规被整文件漏掉，
+# 要么其他文档的作废台账被整片误杀（实测误杀 47 处）。每个文件各自豁免：
+#   1) 文件头：第 1 行到第一个二级标题之前 —— 那里的版本号是主语，不是引用
+#   2) 二级标题命中「变更记录 / 附录 B / 作废 / 台账 / 追溯」的整段 —— 那是追溯区，
+#      版本号是被描述的对象
+# 其余全部视为正文。`--list-exempt` 可导出当前每个文件的豁免区间，供审阅而不是靠感觉。
 #
 # 用法:
 #   ./scripts/check-doc-version-refs.sh                 # 扫 docs/**/*.md
@@ -21,13 +22,12 @@ set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DOCS=${DOCS_DIR:-$ROOT/docs}
-REQ="$DOCS/01-需求基线-OpenStore.md"
 
-exec python3 - "$DOCS" "$REQ" "$@" <<'PY'
+exec python3 - "$DOCS" "$@" <<'PY'
 import io, os, re, sys
 
-docs, req_path = sys.argv[1], sys.argv[2]
-args = sys.argv[3:]
+docs = sys.argv[1]
+args = sys.argv[2:]
 # 只拦"需求版本" v1.x；放过三段式发行版本 v1.4.2 / v1.10.3（那是 Git tag / 镜像 tag，
 # 与需求版本是两套编号。不排除会把发布流水线整条打红——误伤的门禁一定会被关掉）。
 # (?!\.\d) 排除 v1.4.2 的 v1.4；(?<![0-9A-Za-z.]) 排除 xv1.4 / 1.v1.4
@@ -38,34 +38,61 @@ if not os.path.isdir(docs):
 def read(p):
     return io.open(p, encoding='utf-8', errors='replace').read().split('\n')
 
-def ranges_for_req(lines):
-    """豁免区间靠结构标记推导，不硬编码行号（01 会一直变长）。"""
-    hdr_end = chg_start = chg_end = None
-    app_start = None
-    for i, l in enumerate(lines, 1):
-        if hdr_end is None and re.match(r'^> \*\*v1\.\d+ 变更', l):
-            hdr_end, chg_start = i - 1, i
-        if chg_start and chg_end is None and l.startswith('> **本文的写法约定'):
-            chg_end = i - 1
-        if app_start is None and l.startswith('## 附录 B'):
-            app_start = i
+def ranges_for_file(lines):
+    """豁免区间靠结构标记推导，不硬编码行号（文档会一直变长）。
+
+    规则原文是「版本号只允许出现在**本文件**头、变更记录表与附录 B」——
+    「本文件」意味着**每个文件各自豁免**，不是只有 01 豁免。
+    早先只给 01 豁免，结果 02/03/architecture 的作废台账（它们同样是"被描述的对象"）
+    被整片判红，一共 47 处；而唯一的合法处置"往 01 的豁免区间里放"根本放不进去
+    （那些行不在 01 里）。门禁给出的处置路径不可执行时，人只会关掉门禁。
+
+    区间来源（每层都是结构，不是白名单）：
+      1) 文件头：第 1 行到第一个二级标题之前（标题行/当前版本行里版本号是主语）
+      2) 变更记录 / 附录 B / 作废台账 / 追溯区：命中标题的二级章节整体
+    其余全部视为正文。
+    """
     rs = []
-    if hdr_end:  rs.append((1, hdr_end, '文件头（版本号是主语）'))
-    if chg_end:  rs.append((chg_start, chg_end, '变更记录区（追溯区）'))
-    if app_start: rs.append((app_start, len(lines), '附录 B（被描述对象）'))
+    first_h2 = None
+    for i, l in enumerate(lines, 1):
+        if re.match(r'^## ', l):
+            first_h2 = i
+            break
+    if first_h2 and first_h2 > 1:
+        rs.append((1, first_h2 - 1, '文件头（版本号是主语）'))
+
+    cur_start = None
+    for i, l in enumerate(lines, 1):
+        m = re.match(r'^(#+) +(.*)$', l)
+        if m:
+            level, title = len(m.group(1)), m.group(2)
+            if level <= 2:
+                if cur_start is not None:
+                    rs.append((cur_start, i - 1, '追溯区（变更记录 / 附录 B / 作废台账）'))
+                    cur_start = None
+                if re.search(r'变更记录|附录\s*B|作废|台账|追溯', title):
+                    cur_start = i
+            continue
+    if cur_start is not None:
+        rs.append((cur_start, len(lines), '追溯区（变更记录 / 附录 B / 作废台账）'))
+
     return rs
 
 def in_ranges(i, rs):
     return any(a <= i <= b for a, b, _ in rs)
 
 if '--list-exempt' in args:
-    if os.path.isfile(req_path):
-        rs = ranges_for_req(read(req_path))
-        print('文件: %s' % req_path)
+    for f in sorted(os.listdir(docs)):
+        if not f.endswith('.md'):
+            continue
+        rs = ranges_for_file(read(os.path.join(docs, f)))
+        if not rs:
+            print('文件: docs/%s   （无豁免，全文视为正文）' % f)
+            continue
+        print('文件: docs/%s' % f)
         for a, b, why in rs:
             print('  豁免 %d:%d  %s' % (a, b, why))
     print('正则: %s' % PAT.pattern)
-    print('其余文件全文视为正文（含 00/02/03/04/05/06 与 architecture/）')
     sys.exit(0)
 
 files = []
@@ -78,7 +105,7 @@ files.sort()
 total, report = 0, []
 for f in files:
     lines = read(f)
-    rs = ranges_for_req(lines) if os.path.abspath(f) == os.path.abspath(req_path) else []
+    rs = ranges_for_file(lines)
     for i, l in enumerate(lines, 1):
         if in_ranges(i, rs):
             continue
@@ -96,8 +123,10 @@ DOC VERSION REF: 共 %d 处
   → 改为只引用 AC 编号或章节号（见 01 §6 AC-11 / 见 01 §6.1 S7），不要写版本；
     版本号会过期，AC 编号不会。要引用变更条目时用 W 编号（见 W20），不要写 "vX #47"——
     读者还得先知道 vX 是哪一版，缓存键又回来了。
-  → 若某行确实是被描述的对象（台账 / 作废清单 / 历史对照），把它放进 01 的豁免区间，
-    而不是在本脚本里加白名单；白名单是"感觉"，行区间是"结构"。
+  → 若整段确实是被描述的对象（台账 / 作废清单 / 历史对照），把它写成
+    「变更记录 / 附录 B / 作废台账」这样的二级标题章节，脚本会整段豁免；
+    而不是在本脚本里加白名单——白名单是"感觉"，章节结构是"可审阅的事实"。
+    用 --list-exempt 可以看到当前每个文件被豁免了哪些区间。
 """ % total)
     sys.exit(1)
 
