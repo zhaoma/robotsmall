@@ -5,6 +5,8 @@
 # 用法：
 #   ./scripts/soak.sh --tier small  --duration 1800 --conc 8
 #   ./scripts/soak.sh --tier standard --duration 1800 --conc 12
+#   ./scripts/soak.sh --tier small --cold 300 --cold-restart   # 冷启动后立刻压 5 分钟（AC-12 最容易 OOM 的窗口）
+#   ./scripts/soak.sh --tier small --kernel-log skip           # 显式放弃内核日志源（会记 WARN，不是默认）
 #   ./scripts/soak.sh --self-test          # 只验"判定逻辑能不能红"，不连站、不需要 docker
 #   ./scripts/soak.sh --self-test --verbose
 #
@@ -63,6 +65,9 @@ BASE="https://localhost"
 INTERVAL=15
 SELF_TEST=0
 VERBOSE=0
+COLD=300            # 冷启动阶段时长（秒）。0 = 不跑。默认 300 = §2.6.1 要求的"冷启动后立刻压 5 分钟"
+COLD_RESTART=0      # 1 = 冷启动阶段前真的 restart 容器（否则假定操作者刚起过站）
+KERNEL_MODE=auto    # auto = 采内核日志，采不到就 rc=2；require = 同上但更严；skip = 显式放弃（记 WARN）
 ARGS=()
 
 while [ $# -gt 0 ]; do
@@ -79,6 +84,11 @@ while [ $# -gt 0 ]; do
     --url=*)     BASE="${1#--url=}"; shift ;;
     --self-test) SELF_TEST=1; shift ;;
     --verbose)   VERBOSE=1; shift ;;
+    --cold)      COLD="${2:-}"; shift 2 ;;
+    --cold=*)    COLD="${1#--cold=}"; shift ;;
+    --cold-restart) COLD_RESTART=1; shift ;;
+    --kernel-log)   KERNEL_MODE="${2:-}"; shift 2 ;;
+    --kernel-log=*) KERNEL_MODE="${1#--kernel-log=}"; shift ;;
     --list)
       printf 'A1 采样点充足（否则 rc=2 未验证）\n'
       printf 'A2 请求量充足（否则 rc=2 未验证）\n'
@@ -88,6 +98,8 @@ while [ $# -gt 0 ]; do
       printf 'A6 OOMKilled=false 且重启次数增量 0\n'
       printf 'A7 cgroup memory.events 的 oom_kill 增量 0\n'
       printf 'A8 TTFB P95 ≤ 上限\n'
+      printf '(冷启动阶段 RSS、稳态 RSS 斜率、机器规格与数据量指纹：作为证据输出，不单独设门；见 docs/05 §2.6.1)\n'
+      printf '(--list 只列"这台机器上现在能跑的判定项"；"该不该有"属文档，两者不混——否则 EXECUTED=PLANNED 会自己变绿)\n'
       exit 0 ;;
     -h|--help)
       sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
@@ -161,7 +173,7 @@ emit_fail() { printf '  %-3s %-22s FAIL  %s\n' "$1" "$2" "${3:-}"; FAIL=$((FAIL+
 emit_pre()  { printf '  %-3s %-22s NO-DATA  %s\n' "$1" "$2" "${3:-}"; }
 
 judge() {
-  local csv="$1" req="$2" insp="$3" events="$4" min_samples="$5" min_reqs="$6"
+  local csv="$1" req="$2" insp="$3" events="$4" kern="$5" min_samples="$6" min_reqs="$7"
 
   # ---- A1 采样点充足（硬门：不足 = 未验证）----
   local nsamp
@@ -231,13 +243,18 @@ judge() {
     fi
   fi
 
-  # ---- A7 cgroup oom_kill 增量 ----
-  local kills
+  # ---- A7 cgroup oom_kill 增量 + 内核日志（第三条证据）----
+  # 三源缺一就只能猜：① 容器态（A6）② cgroup 计数（这里）③ 内核 journal（这里）。
+  # cgroup 计数"重启也不清零"，但它只在容器有 cgroup 限额时才有意义；
+  # 内核日志则记"谁杀的谁"，能抓到"宿主机整体 OOM 把别的进程杀了"这种 cgroup 看不见的情况。
+  local kills kernhits
   kills=$(awk '{for(i=1;i<=NF;i++) if ($i ~ /^oom_kill=/) {split($i,a,"="); s+=a[2]}} END{print s+0}' "$events")
-  if [ "$kills" -gt 0 ]; then
-    emit_fail A7 "cgroup oom_kill" "oom_kill 增量 ${kills}（这个计数重启也不清零，最硬的一条证据）"
+  kernhits=$(grep -ciE 'out of memory|killed process' "${kern:-/dev/null}" 2>/dev/null)
+  : "${kernhits:=0}"
+  if [ "$kills" -gt 0 ] || [ "$kernhits" -gt 0 ]; then
+    emit_fail A7 "oom_kill（cgroup+内核）" "cgroup oom_kill 增量 ${kills}；内核日志命中 ${kernhits} 行（三源里任一非零即判失败）"
   else
-    emit_ok A7 "cgroup oom_kill" "增量 0"
+    emit_ok A7 "oom_kill（cgroup+内核）" "cgroup 增量 0；内核日志 0 条 OOM 记录"
   fi
 
   # ---- A8 TTFB P95 ----
@@ -309,11 +326,11 @@ self_test() {
   }
 
   local failn=0 total=0
-  run_case() {  # $1 名称 $2 期望（- 表示应绿 / A1..A8 / rc2）$3..$5 四个文件
-    local name="$1" want="$2" csv="$3" req="$4" insp="$5" ev="$6"
+  run_case() {  # $1 名称 $2 期望（- 表示应绿 / A1..A8 / rc2）$3..$6 四个文件 $7 内核日志（可缺省）
+    local name="$1" want="$2" csv="$3" req="$4" insp="$5" ev="$6" kern="${7:-/dev/null}"
     total=$((total+1))
     : > "$TMPD/out"
-    ( judge "$csv" "$req" "$insp" "$ev" 8 100 ) > "$TMPD/out" 2>&1
+    ( judge "$csv" "$req" "$insp" "$ev" "$kern" 8 100 ) > "$TMPD/out" 2>&1
     local rc=$?
     local got=""
     if [ "$rc" -eq 2 ]; then
@@ -375,6 +392,10 @@ self_test() {
   gen_req "$TMPD/r10" 200 200 0.72
   run_case "TTFB 全为 720ms > 500 上限" "A8" "$TMPD/c1" "$TMPD/r10" "$TMPD/i1" "$TMPD/e1"
 
+  # 11) 内核日志命中 OOM（cgroup 看不见的那种）
+  printf 'kern: [12345.678] Out of memory: Killed process 4242 (dotnet) total-vm:1234567kB\n' > "$TMPD/k11"
+  run_case "内核日志记录 OOM（cgroup 计数仍为 0）" "A7" "$TMPD/c1" "$TMPD/r1" "$TMPD/i1" "$TMPD/e1" "$TMPD/k11"
+
   say ""
   if [ "$failn" -eq 0 ]; then
     say "== 自证通过：${total} 个样本，正确样本绿、每种坏情况各自红在预期断言上 =="
@@ -413,12 +434,17 @@ main() {
     }
   done
 
-  local TS OUT REQLOG
+  local TS OUT REQLOG INSP EVENTS KERN META
   TS=$(date -u +%Y%m%dT%H%M%SZ)
   OUT="$ROOT/artifacts/soak-${TS}.csv"
   REQLOG="$ROOT/artifacts/soak-${TS}-req.log"
+  INSP="$ROOT/artifacts/soak-${TS}-inspect.txt"
+  EVENTS="$ROOT/artifacts/soak-${TS}-events.txt"
+  KERN="$ROOT/artifacts/soak-${TS}-kernel.log"
+  META="$ROOT/artifacts/soak-${TS}-meta.txt"
   mkdir -p "$ROOT/artifacts"
-  printf 'ts,api_mb,store_mb,caddy_mb\n' > "$OUT"
+  # phase 列区分 cold / steady：冷启动阶段的峰值往往才是最高峰，混在一起就看不出来了
+  printf 'ts,api_mb,store_mb,caddy_mb,phase\n' > "$OUT"
   : > "$REQLOG"
 
   local min_samples min_reqs
@@ -429,6 +455,23 @@ main() {
   say "   目标 ${BASE}  时长 ${DUR}s  并发 ${CONC}  采样间隔 ${INTERVAL}s"
   say "   预算：RSS 合计 ≤ ${RSS_BUDGET_MB} MB；TTFB P95 ≤ ${TTFB_P95_MS} ms；三进程 OOM 证据必须干净"
   say "   原始数据：${OUT}    请求明细：${REQLOG}"
+
+  # ---- 规格与数据量指纹：结论必须能和"在什么机器、多少数据上跑"绑定 ----
+  # 不带指纹的压测结论无法比较：同一份脚本在 8 核开发机与 2C2G 上跑，绿的含金量完全不同。
+  {
+    printf 'tier=%s (%s)\n' "$TIER" "$TIER_DESC"
+    printf 'time=%s\n' "$TS"
+    printf 'nproc=%s\n' "$( (nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo '?') | head -1)"
+    printf 'mem_total=%s\n' "$( (awk '/MemTotal/{printf "%.1fG", $2/1048576}' /proc/meminfo 2>/dev/null) || echo '?' )"
+    printf 'rss_budget_mb=%s ttfb_p95_ms=%s\n' "$RSS_BUDGET_MB" "$TTFB_P95_MS"
+    printf 'duration_s=%s interval_s=%s conc=%s cold_s=%s\n' "$DUR" "$INTERVAL" "$CONC" "$COLD"
+    local sku ord
+    sku=$(docker compose exec -T api sqlite3 /data/openstore.db "select count(*) from Product;" 2>/dev/null | tr -d ' \r')
+    ord=$(docker compose exec -T api sqlite3 /data/openstore.db "select count(*) from Order;" 2>/dev/null | tr -d ' \r')
+    printf 'products=%s orders=%s\n' "${sku:-?}" "${ord:-?}"
+    printf 'sitemap_urls=%s\n' "$(curl -s --max-time 10 "${BASE}/sitemap.xml" 2>/dev/null | grep -c '<loc>')"
+  } > "$META" 2>&1
+  say "   规格/数据量指纹：${META}"
 
   # ---- 压测前的 OOM 基线（增量判定的起点）----
   local RESTARTS_BEFORE
@@ -442,6 +485,25 @@ main() {
   prod=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${BASE}/sitemap.xml" >/dev/null 2>&1; \
          curl -s --max-time 10 "${BASE}/sitemap.xml" | grep -oE '/[a-z]{2}/products/[^<]+' | head -1)
   [ -n "$prod" ] && URLS+=("${BASE}${prod}")
+
+  # ---- 冷启动阶段：AC-12 最容易 OOM 的窗口（分类树 + 模板 + 首屏区块同时加载）----
+  if [ "${COLD}" -gt 0 ] 2>/dev/null; then
+    if [ "$COLD_RESTART" -eq 1 ]; then
+      say "   冷启动：先 restart api storefront（模拟刚上线），再立刻压 ${COLD}s"
+      docker compose restart api storefront >/dev/null 2>&1 || true
+      local k
+      k=0
+      until curl -fsS --max-time 2 -o /dev/null "http://127.0.0.1:5080/health/ready" 2>/dev/null; do
+        k=$((k+1)); [ "$k" -gt 60 ] && break; sleep 1
+      done
+    else
+      say "   冷启动：不 restart（假定你刚起过站），直接压 ${COLD}s。要真的冷启请加 --cold-restart"
+    fi
+  else
+    say "   冷启动阶段：跳过（--cold 0）。注意：热稳态过不等于能上线。"
+  fi
+  local KERN_SINCE
+  KERN_SINCE=$(date -u '+%Y-%m-%d %H:%M:%S')
 
   # ---- 加压：CONC 个 worker（原草稿的 CONC 是死参数，这里真的用上）----
   local STOP="$ROOT/artifacts/.soak-stop-${TS}"
@@ -459,28 +521,26 @@ main() {
   local w
   for w in $(seq 1 "$CONC"); do worker & done
 
-  # ---- 采样：RSS（按单位换算）+ 结束时读 OOM 证据 ----
-  local end i
-  end=$(( $(date +%s) + DUR ))
-  i=0
-  while [ "$(date +%s)" -lt "$end" ]; do
-    local m_api m_store m_caddy
-    m_api=$(to_mb "$(docker stats --no-stream --format '{{.MemUsage}}' "$cid_api" 2>/dev/null | awk -F/ '{print $1}')")
-    m_store=$(to_mb "$(docker stats --no-stream --format '{{.MemUsage}}' "$cid_store" 2>/dev/null | awk -F/ '{print $1}')")
-    m_caddy=$(to_mb "$(docker stats --no-stream --format '{{.MemUsage}}' "$cid_caddy" 2>/dev/null | awk -F/ '{print $1}')")
-    printf '%s,%s,%s,%s\n' "$(date +%s)" "${m_api}" "${m_store}" "${m_caddy}" >> "$OUT"
-    sayv "  [$(date -u +%H:%M:%S)] api=${m_api}MB store=${m_store}MB caddy=${m_caddy}MB"
-    i=$((i+1))
-    sleep "$INTERVAL"
-  done
+  # ---- 采样：RSS（按单位换算），两段（cold / steady）写同一份 CSV，用 phase 列区分 ----
+  sample_phase() {
+    local secs="$1" phase="$2" stop_at m_api m_store m_caddy
+    stop_at=$(( $(date +%s) + secs ))
+    while [ "$(date +%s)" -lt "$stop_at" ]; do
+      m_api=$(to_mb "$(docker stats --no-stream --format '{{.MemUsage}}' "$cid_api" 2>/dev/null | awk -F/ '{print $1}')")
+      m_store=$(to_mb "$(docker stats --no-stream --format '{{.MemUsage}}' "$cid_store" 2>/dev/null | awk -F/ '{print $1}')")
+      m_caddy=$(to_mb "$(docker stats --no-stream --format '{{.MemUsage}}' "$cid_caddy" 2>/dev/null | awk -F/ '{print $1}')")
+      printf '%s,%s,%s,%s,%s\n' "$(date +%s)" "${m_api}" "${m_store}" "${m_caddy}" "$phase" >> "$OUT"
+      sayv "  [$(date -u +%H:%M:%S)][${phase}] api=${m_api}MB store=${m_store}MB caddy=${m_caddy}MB"
+      sleep "$INTERVAL"
+    done
+  }
+  [ "${COLD}" -gt 0 ] 2>/dev/null && sample_phase "$COLD" cold
+  sample_phase "$DUR" steady
 
   touch "$STOP"; wait 2>/dev/null || true
   rm -f "$STOP"
 
-  # ---- 压测后的 OOM 证据 ----
-  local INSP EVENTS
-  INSP="$ROOT/artifacts/soak-${TS}-inspect.txt"
-  EVENTS="$ROOT/artifacts/soak-${TS}-events.txt"
+  # ---- 压测后的 OOM 证据（三源：容器态 / cgroup / 内核日志）----
   docker inspect -f '{{.Name}} OOMKilled={{.State.OOMKilled}} Restarts={{.RestartCount}} ExitCode={{.State.ExitCode}}' \
     "$cid_api" "$cid_store" "$cid_caddy" 2>/dev/null | sed 's#^/##' > "$INSP"
   : > "$EVENTS"
@@ -493,10 +553,42 @@ main() {
     printf '%s oom_kill=%s\n' "$nm" "${ev:-0}" >> "$EVENTS"
   done
 
+  # 内核日志源：唯一能抓到"宿主机整体 OOM、被杀的不是这三个容器"的证据。
+  # 采不到就 rc=2（三源缺一只能猜），除非操作者显式 --kernel-log skip（记 WARN）。
+  : > "$KERN"
+  if [ "$KERNEL_MODE" = "skip" ]; then
+    say "   WARN 内核日志源被显式跳过（--kernel-log skip）：A7 只剩 cgroup 一个来源，证据强度下降，回填时必须写明"
+  elif command -v journalctl >/dev/null 2>&1; then
+    journalctl -k --since "$KERN_SINCE" 2>/dev/null \
+      | grep -iE 'out of memory|killed process' > "$KERN" 2>/dev/null || true
+    if [ ! -s "$KERN" ] && ! journalctl -k -n 1 >/dev/null 2>&1; then
+      printf 'PRECONDITION: 内核日志不可读（journalctl 需要权限，请用 sudo 跑；或用 --kernel-log skip 显式放弃该来源）→ 未验证\n' >&2
+      touch "$STOP"; wait 2>/dev/null || true; rm -f "$STOP"; exit 2
+    fi
+  else
+    printf 'PRECONDITION: 没有 journalctl（非 systemd 宿主）→ 内核日志源不可用 = 未验证（或用 --kernel-log skip 显式放弃）\n' >&2
+    touch "$STOP"; wait 2>/dev/null || true; rm -f "$STOP"; exit 2
+  fi
+
   say ""
-  say "== 判定（A1..A8）"
+  say "== 证据摘要（数值，不是门限；供回填与趋势对比）"
+  awk -F, 'NR>1 && $5=="cold"   {t=$2+$3+$4; if(t>m) m=t} END{if (m=="") print "  冷启动阶段峰值 RSS = 未采集（--cold 0）"; else printf "  冷启动阶段峰值 RSS = %.1f MB\n", m}' "$OUT"
+  awk -F, 'NR>1 && $5=="steady" {t=$2+$3+$4; if(t>m) m=t} END{if (m=="") print "  稳态阶段峰值 RSS = 未采集"; else printf "  稳态阶段峰值 RSS = %.1f MB\n", m}' "$OUT"
+  # 斜率：稳态段合计 RSS 对采样序号的最小二乘斜率（换算成 MB/min）。
+  # **观测项、不设门限**：一次 30 分钟的斜率不足以区分"慢泄漏"与"缓存还没热透"，
+  # 至少要三次同规格跑出同向趋势才可下结论。设成门限只会造出一个偶尔红、没人看得懂的断言。
+  awk -F, -v iv="$INTERVAL" '
+    NR>1 && $5=="steady" {n++; x=n; y=$2+$3+$4; sx+=x; sy+=y; sxx+=x*x; sxy+=x*y}
+    END{
+      if (n<3) {print "  稳态 RSS 斜率 = 样本不足（<3）"; exit}
+      d=n*sxx-sx*sx
+      if (d==0) {print "  稳态 RSS 斜率 = 无法计算"; exit}
+      printf "  稳态 RSS 斜率 = %+.2f MB/min（%d 个稳态采样点；观测项，无门限）\n", (n*sxy-sx*sy)/d*(60/iv), n
+    }' "$OUT"
+  say ""
+  say "== 判定（A1..A8；判定项清单以 --list 为唯一出处）"
   local rc
-  judge "$OUT" "$REQLOG" "$INSP" "$EVENTS" "$min_samples" "$min_reqs"
+  judge "$OUT" "$REQLOG" "$INSP" "$EVENTS" "$KERN" "$min_samples" "$min_reqs"
   rc=$?
   print_summary "$rc"
 
@@ -506,6 +598,8 @@ main() {
   say "  ${REQLOG}"
   say "  ${INSP}"
   say "  ${EVENTS}"
+  say "  ${KERN}   （内核 OOM 记录；--kernel-log skip 时为空）"
+  say "  ${META}   （规格与数据量指纹：结论必须与它绑定才能比较）"
   [ "$rc" -eq 0 ] && [ "$FAIL" -eq 0 ] && exit 0
   exit "$rc"
 }
