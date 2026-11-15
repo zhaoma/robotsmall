@@ -519,8 +519,6 @@ def route(path, q):
         #   v13 404 = SlugHistory 干脆没实现（在售商品的旧地址断掉）
         #   v14 200 = 旧地址还活着（重复内容，canonical 两面都自指，救不了）
         #   v15 301 但指向别处（落点照样 200，只有"目标必须等于新 slug"能抓）
-        #   v14 200 = 旧地址还活着（重复内容，canonical 两面都自指，救不了）
-        #   v15 301 但指向别处（落点照样 200，只有"目标必须等于新 slug"能抓）
         if MODE == "v13":
             return 404, "text/html", page(""), {}
         if MODE == "v14":
