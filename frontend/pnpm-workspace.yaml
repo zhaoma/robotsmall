@@ -1,0 +1,4 @@
+packages:
+  - apps/*
+  - packages/*
+  # themes/* 暂缓：主题机制本期不做（里程碑 A 仅搭 admin + 共享包）

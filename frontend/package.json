@@ -1,0 +1,13 @@
+{
+  "name": "openstore-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:admin": "pnpm --filter @openstore/admin dev",
+    "dev:store": "echo 'storefront 本期未实现（里程碑 B 之后再做）' && exit 0",
+    "build": "pnpm --filter @openstore/admin build",
+    "check": "pnpm --filter @openstore/sdk check && pnpm --filter @openstore/i18n check && pnpm --filter @openstore/admin check"
+  },
+  "packageManager": "pnpm@12.21.0"
+}
