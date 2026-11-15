@@ -156,6 +156,13 @@ internal static class SeedBenchCommand
         Console.WriteLine($"variants={verification.Variants}");
         Console.WriteLine($"status_active={verification.Active}");
         Console.WriteLine($"status_draft={verification.Draft}");
+        Console.WriteLine($"products_with_wrong_variant_count={verification.UnevenProducts}");
+        Console.WriteLine($"duplicate_axis_signatures={verification.DuplicateAxisSignatures}");
+
+        // 这一项的**成立范围**必须跟着数据一起打印，不能只写在文档里：
+        // 报告一旦被摘出来单独转发，"每分类 500" 会被直接读成"分类页指标已达标"。
+        Console.WriteLine("category_check_scope=slug-segment（M0 无 ProductCategory 表；只证明列表数据量，不证明分类 join 成本）");
+
         Console.WriteLine($"inserted_products={report.InsertedProducts}");
         Console.WriteLine($"inserted_variants={report.InsertedVariants}");
         Console.WriteLine($"skipped_products={report.SkippedProducts}");

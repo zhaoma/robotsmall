@@ -215,10 +215,52 @@ public static class BenchDataSeeder
             problems.Add($"ProductVariant 行数 {variants} != 规格 {spec.VariantCount}");
         }
 
+        // 每个商品必须**恰好** VariantsPerProduct 个变体。
+        // 光看总数不够：一个商品挂 10 个、另一个挂 0 个，总数照样对，而前台的规格选择器
+        // 与"每商品 5 个 SKU"的假设已经破了——这类数据会让商品详情页的变体矩阵
+        // 在某些商品上返回空，且只在被点开时才暴露。
+        var unevenProducts = await db.Products
+            .AsNoTracking()
+            .Where(p => p.Slug.StartsWith(SlugPrefix))
+            .Select(p => new { p.Id, Count = p.Variants.Count })
+            .CountAsync(x => x.Count != spec.VariantsPerProduct, ct)
+            .ConfigureAwait(false);
+
+        if (unevenProducts != 0)
+        {
+            problems.Add($"{unevenProducts} 个商品的变体数 != {spec.VariantsPerProduct}");
+        }
+
+        // 同商品内轴签名重复 = 0。
+        // DB 上已有唯一索引 IX_ProductVariant_Product_AxisSignature，所以这条**不是**
+        // 重复检查领域层已经做过的事：它验的是"那个索引真的在这份库里"。
+        // 手写迁移、重建表（SQLite 改表要重建）都可能把索引丢掉，而丢掉之后
+        // 现象是"同一组合出现两个可售变体"——下单时才知道。
+        var duplicateAxis = await db.ProductVariants
+            .AsNoTracking()
+            .Where(v => v.Sku.StartsWith(SkuPrefix))
+            .GroupBy(v => new { v.ProductId, v.AxisSignature })
+            .Where(g => g.Count() > 1)
+            .CountAsync(ct)
+            .ConfigureAwait(false);
+
+        if (duplicateAxis != 0)
+        {
+            problems.Add($"{duplicateAxis} 组 (ProductId, AxisSignature) 重复（唯一索引没生效）");
+        }
+
         // 分类分布：M0 物理表还没有 Category / ProductCategory（M1 才落），
-        // 所以分类归属暂由 slug 的 `bench-cNN-` 段表达。这**不是**取巧的替代品，
-        // 而是"现在能验的那一半"：每分类商品数不达标时，分类页清单的负载就是错的。
-        // M1 建表后此处改为按 ProductCategory 聚合，slug 段同时作为回填依据。
+        // 所以分类归属暂由 slug 的 `bench-cNN-` 段表达。
+        //
+        // ⚠️ **这只证明"列表数据量"，不证明"分类 join 成本"。** 报告里必须成对出现，
+        // 否则"每分类 500 ✅"会被当成"分类页指标已达标"用（见 docs/06 §4.1 的缺口表）。
+        //
+        // ⚠️ **M1 必须迁移判据，不要留 LIKE 当长期判据**：目标模型里 `Product` 没有 slug 列，
+        // slug 在 ProductTranslation 上且唯一索引是 (Locale, Slug) —— 同一个商品在不同语种
+        // 可以有不同 slug。所以 slug 段只在**默认语种那一行**成立，拿它做跨语种分类 key 会错；
+        // 而分类重新归属时 slug 不会变，LIKE 会静默给出**错**的分类，那恰恰是 AC-12 要量的东西。
+        // 迁移形态：先建 Category，再为每个商品建恰好一行 ProductCategory(IsPrimary=true)，
+        // 此处改为 join 计数；slug 段只作一次性回填依据。
         for (var c = 0; c < spec.Categories.Count; c++)
         {
             var prefix = CategorySlugPrefix(c);
@@ -233,7 +275,7 @@ public static class BenchDataSeeder
             }
         }
 
-        return new BenchVerification(products, variants, active, products - active, problems);
+        return new BenchVerification(products, variants, active, products - active, unevenProducts, duplicateAxis, problems);
     }
 
     /// <summary>
@@ -426,11 +468,18 @@ public sealed record BenchSpec
 public sealed record BenchTableStat(string Table, int Rows, string Sha256);
 
 /// <summary>"造满了"的核对结果。<see cref="Problems"/> 为空才算通过。</summary>
+/// <remarks>
+/// <see cref="UnevenProducts"/> 与 <see cref="DuplicateAxisSignatures"/> 单独暴露、不合并进
+/// <see cref="Problems"/> 的计数里：报告要能看出"总数达标但分布坏了"这种形态。
+/// 行数对、分布不对，是最容易被读成"通过"的一类失败。
+/// </remarks>
 public sealed record BenchVerification(
     int Products,
     int Variants,
     int Active,
     int Draft,
+    int UnevenProducts,
+    int DuplicateAxisSignatures,
     IReadOnlyList<string> Problems)
 {
     public bool IsComplete => Problems.Count == 0;
