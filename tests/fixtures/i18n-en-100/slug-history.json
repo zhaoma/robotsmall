@@ -1,0 +1,20 @@
+{
+  "slugHistory": [
+    {
+      "entityType": "Product",
+      "entityTypeValue": 0,
+      "entityKey": "fx-kettle",
+      "locale": "en",
+      "oldSlug": "fx-kettle-v1",
+      "newSlug": "fx-kettle"
+    },
+    {
+      "entityType": "Product",
+      "entityTypeValue": 0,
+      "entityKey": "fx-arch-orphan",
+      "locale": "en",
+      "oldSlug": "fx-arch-orphan-v1",
+      "newSlug": "fx-arch-orphan"
+    }
+  ]
+}

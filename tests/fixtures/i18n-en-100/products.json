@@ -1,0 +1,325 @@
+{
+  "products": [
+    {
+      "key": "fx-mug",
+      "internalCode": "FIXTURE",
+      "status": "Active",
+      "translations": [
+        {
+          "locale": "zh-Hans",
+          "slug": "fx-mug",
+          "name": "陶瓷马克杯",
+          "shortDescription": "釉面陶瓷，350 毫升与 500 毫升两种容量。",
+          "description": "<p>厚壁陶瓷杯身，杯口经手工打磨。可进洗碗机与微波炉。</p>",
+          "seoTitle": "陶瓷马克杯｜OpenStore 示例店",
+          "seoDescription": "釉面陶瓷马克杯，350 毫升与 500 毫升两种容量，可进洗碗机。"
+        },
+        {
+          "locale": "en",
+          "slug": "fx-mug",
+          "name": "Ceramic Mug",
+          "shortDescription": "Glazed ceramic, available in 350 ml and 500 ml.",
+          "description": "<p>Thick-walled ceramic body with a hand-finished rim. Dishwasher and microwave safe.</p>",
+          "seoTitle": "Ceramic Mug | OpenStore Demo Store",
+          "seoDescription": "Glazed ceramic mug in 350 ml and 500 ml, dishwasher safe."
+        }
+      ],
+      "categories": [ "fx-cat-home" ],
+      "attributes": [
+        { "code": "material", "option": "ceramic" },
+        { "code": "care", "option": "hand" }
+      ],
+      "variants": [
+        { "sku": "FX-MUG-350ML", "axes": [ { "code": "capacity", "option": "350ml" } ], "amountMinor": 2900, "currency": "CNY", "onHand": 3, "reserved": 0, "sold": 0 },
+        { "sku": "FX-MUG-500ML", "axes": [ { "code": "capacity", "option": "500ml" } ], "amountMinor": 3400, "currency": "CNY", "onHand": 10, "reserved": 0, "sold": 0 }
+      ],
+      "images": [
+        {
+          "file": "fx-mug-1.png",
+          "sortOrder": 0,
+          "altByLocale": { "zh-Hans": "白色陶瓷马克杯的正面照片", "en": "Front photo of a white ceramic mug" }
+        }
+      ]
+    },
+    {
+      "key": "fx-tee",
+      "internalCode": "FIXTURE",
+      "status": "Active",
+      "translations": [
+        {
+          "locale": "zh-Hans",
+          "slug": "fx-tee",
+          "name": "纯棉T恤",
+          "shortDescription": "240 克重精梳棉，三种颜色两个尺码。",
+          "description": "<p>240 克重精梳棉，肩部有加固带。<img src=\"fx-tee-desc-1.png\" alt=\"不锈钢支架安装于T恤框架的示意图\"></p>",
+          "seoTitle": "纯棉T恤｜OpenStore 示例店",
+          "seoDescription": "240 克重精梳棉T恤，三色可选，机洗不变形。"
+        },
+        {
+          "locale": "en",
+          "slug": "fx-tee",
+          "name": "Cotton T-Shirt",
+          "shortDescription": "240 gsm combed cotton, three colours and two sizes.",
+          "description": "<p>240 gsm combed cotton with reinforced shoulder tape.<img src=\"fx-tee-desc-1.png\" alt=\"Stainless bracket mounted on the tee frame\"></p>",
+          "seoTitle": "Cotton T-Shirt | OpenStore Demo Store",
+          "seoDescription": "240 gsm combed cotton T-shirt in three colours, machine washable."
+        }
+      ],
+      "categories": [ "fx-cat-apparel-tops" ],
+      "attributes": [
+        { "code": "material", "option": "cotton" },
+        { "code": "care", "option": "machine" }
+      ],
+      "variants": [
+        { "sku": "FX-TEE-BLK-M", "axes": [ { "code": "color", "option": "black" }, { "code": "size", "option": "m" } ], "amountMinor": 8900, "currency": "CNY", "onHand": 20, "reserved": 0, "sold": 0 },
+        { "sku": "FX-TEE-BLK-L", "axes": [ { "code": "color", "option": "black" }, { "code": "size", "option": "l" } ], "amountMinor": 8900, "currency": "CNY", "onHand": 20, "reserved": 0, "sold": 0 },
+        { "sku": "FX-TEE-WHT-M", "axes": [ { "code": "color", "option": "white" }, { "code": "size", "option": "m" } ], "amountMinor": 8900, "currency": "CNY", "onHand": 20, "reserved": 0, "sold": 0 },
+        { "sku": "FX-TEE-WHT-L", "axes": [ { "code": "color", "option": "white" }, { "code": "size", "option": "l" } ], "amountMinor": 8900, "currency": "CNY", "onHand": 20, "reserved": 0, "sold": 0 },
+        { "sku": "FX-TEE-SND-M", "axes": [ { "code": "color", "option": "sand" }, { "code": "size", "option": "m" } ], "amountMinor": 8900, "currency": "CNY", "onHand": 20, "reserved": 0, "sold": 0 },
+        { "sku": "FX-TEE-SND-L", "axes": [ { "code": "color", "option": "sand" }, { "code": "size", "option": "l" } ], "amountMinor": 8900, "currency": "CNY", "onHand": 20, "reserved": 0, "sold": 0 }
+      ],
+      "images": [
+        {
+          "file": "fx-tee-1.png",
+          "sortOrder": 0,
+          "altByLocale": { "zh-Hans": "黑色纯棉T恤平铺照片", "en": "Flat-lay photo of a black cotton T-shirt" }
+        },
+        {
+          "file": "fx-tee-2.png",
+          "sortOrder": 1,
+          "altByLocale": { "zh-Hans": "白色纯棉T恤平铺照片", "en": "Flat-lay photo of a white cotton T-shirt" }
+        }
+      ]
+    },
+    {
+      "key": "fx-tote",
+      "internalCode": "FIXTURE",
+      "status": "Active",
+      "translations": [
+        {
+          "locale": "zh-Hans",
+          "slug": "fx-tote",
+          "name": "帆布托特包",
+          "shortDescription": "16 安帆布，内置证件袋。",
+          "description": "<p>16 安本色帆布，提手处双线加固，可承重 8 公斤。</p>",
+          "seoTitle": "帆布托特包｜OpenStore 示例店",
+          "seoDescription": "16 安帆布托特包，内置证件袋，可承重 8 公斤。"
+        }
+      ],
+      "categories": [ "fx-cat-apparel" ],
+      "attributes": [
+        { "code": "material", "option": "canvas" },
+        { "code": "care", "option": "hand" }
+      ],
+      "variants": [
+        { "sku": "FX-TOTE-STD", "axes": [], "amountMinor": 5900, "currency": "CNY", "onHand": 15, "reserved": 0, "sold": 0 }
+      ],
+      "images": [
+        {
+          "file": "fx-tote-1.png",
+          "sortOrder": 0,
+          "altByLocale": { "zh-Hans": "本色帆布托特包照片", "en": "Photo of a natural canvas tote bag" }
+        }
+      ]
+    },
+    {
+      "key": "fx-oos",
+      "internalCode": "FIXTURE",
+      "status": "Active",
+      "translations": [
+        {
+          "locale": "zh-Hans",
+          "slug": "fx-oos",
+          "name": "不锈钢随行杯",
+          "shortDescription": "双层真空，保温 12 小时。",
+          "description": "<p>304 不锈钢内胆，双层真空，杯盖带密封圈。</p>",
+          "seoTitle": "不锈钢随行杯｜OpenStore 示例店",
+          "seoDescription": "304 不锈钢双层真空随行杯，保温 12 小时。"
+        },
+        {
+          "locale": "en",
+          "slug": "fx-oos",
+          "name": "Stainless Travel Tumbler",
+          "shortDescription": "Double-wall vacuum, keeps drinks hot for 12 hours.",
+          "description": "<p>304 stainless steel liner with double-wall vacuum insulation and a sealed lid.</p>",
+          "seoTitle": "Stainless Travel Tumbler | OpenStore Demo Store",
+          "seoDescription": "304 stainless double-wall vacuum tumbler, keeps drinks hot for 12 hours."
+        }
+      ],
+      "categories": [ "fx-cat-home" ],
+      "attributes": [
+        { "code": "material", "option": "steel" },
+        { "code": "care", "option": "hand" }
+      ],
+      "variants": [
+        { "sku": "FX-OOS-STD", "axes": [], "amountMinor": 12900, "currency": "CNY", "onHand": 0, "reserved": 0, "sold": 0 }
+      ],
+      "images": [
+        {
+          "file": "fx-oos-1.png",
+          "sortOrder": 0,
+          "altByLocale": { "zh-Hans": "银色不锈钢随行杯照片", "en": "Photo of a silver stainless travel tumbler" }
+        }
+      ]
+    },
+    {
+      "key": "fx-kettle",
+      "internalCode": "FIXTURE",
+      "status": "Active",
+      "translations": [
+        {
+          "locale": "zh-Hans",
+          "slug": "fx-kettle",
+          "name": "电水壶",
+          "shortDescription": "1.7 升，304 内胆，六档控温。",
+          "description": "<p>1.7 升容量，304 不锈钢内胆，六档控温，沸腾后自动断电。</p>",
+          "seoTitle": "电水壶｜OpenStore 示例店",
+          "seoDescription": "1.7 升电水壶，304 不锈钢内胆，六档控温。"
+        },
+        {
+          "locale": "en",
+          "slug": "fx-kettle",
+          "name": "Electric Kettle",
+          "shortDescription": "1.7 L, 304 stainless liner, six temperature presets.",
+          "description": "<p>1.7 litre capacity with a 304 stainless steel liner, six temperature presets and auto shut-off at boil.</p>",
+          "seoTitle": "Electric Kettle | OpenStore Demo Store",
+          "seoDescription": "1.7 litre electric kettle with a 304 stainless liner and six temperature presets."
+        }
+      ],
+      "categories": [ "fx-cat-home" ],
+      "attributes": [
+        { "code": "material", "option": "steel" },
+        { "code": "care", "option": "hand" }
+      ],
+      "variants": [
+        { "sku": "FX-KETTLE-STD", "axes": [], "amountMinor": 19900, "currency": "CNY", "onHand": 8, "reserved": 0, "sold": 0 }
+      ],
+      "images": [
+        {
+          "file": "fx-kettle-1.png",
+          "sortOrder": 0,
+          "altByLocale": { "zh-Hans": "不锈钢电水壶照片", "en": "Photo of a stainless steel electric kettle" }
+        }
+      ]
+    },
+    {
+      "key": "fx-arm",
+      "internalCode": "FX-ARM-3000",
+      "status": "Active",
+      "translations": [
+        {
+          "locale": "zh-Hans",
+          "slug": "fx-arm",
+          "name": "机甲臂-3000 机械臂",
+          "shortDescription": "六轴桌面机械臂，重复定位精度 0.02 毫米。",
+          "description": "<p>六轴桌面机械臂，铝合金骨架，重复定位精度 0.02 毫米，配套开放 SDK。</p>",
+          "seoTitle": "机甲臂-3000 机械臂｜OpenStore 示例店",
+          "seoDescription": "六轴桌面机械臂，重复定位精度 0.02 毫米，配套开放 SDK。"
+        },
+        {
+          "locale": "en",
+          "slug": "fx-arm",
+          "name": "Robot Arm 机甲臂-3000",
+          "shortDescription": "Six-axis desktop robotic arm with 0.02 mm repeatability.",
+          "description": "<p>Six-axis desktop robotic arm with an aluminium frame, 0.02 mm repeat positioning accuracy and an open SDK.</p>",
+          "seoTitle": "Robot Arm-3000 | OpenStore Demo Store",
+          "seoDescription": "Six-axis desktop robotic arm with 0.02 mm repeat positioning accuracy and an open SDK."        }
+      ],
+      "categories": [ "fx-cat-apparel" ],
+      "attributes": [
+        { "code": "material", "option": "polyester" },
+        { "code": "care", "option": "dryclean" }
+      ],
+      "variants": [
+        { "sku": "FX-ARM-3000-STD", "axes": [], "amountMinor": 199900, "currency": "CNY", "onHand": 6, "reserved": 0, "sold": 0 }
+      ],
+      "images": [
+        {
+          "file": "fx-arm-1.png",
+          "sortOrder": 0,
+          "altByLocale": { "zh-Hans": "六轴机械臂整机照片", "en": "Photo of the complete six-axis robotic arm" }
+        }
+      ]
+    },
+    {
+      "key": "fx-arch-repl",
+      "internalCode": "FIXTURE",
+      "status": "Archived",
+      "translations": [
+        {
+          "locale": "zh-Hans",
+          "slug": "fx-arch-repl",
+          "name": "归档花瓶（有替代分类）",
+          "shortDescription": "已下架；归档前同时归入「家居」与「家居摆件」。",
+          "description": "<p>手工拉坯陶瓷花瓶，已下架。归档前归属两个分类，用于验证 301 的\"取最深\"。</p>",
+          "seoTitle": "归档花瓶｜OpenStore 示例店",
+          "seoDescription": "已下架的手工陶瓷花瓶。"
+        },
+        {
+          "locale": "en",
+          "slug": "fx-arch-repl",
+          "name": "Archived Vase (with replacement category)",
+          "shortDescription": "Discontinued; before archiving it belonged to both Home and Home Decor.",
+          "description": "<p>Hand-thrown ceramic vase, discontinued. It belonged to two categories before archiving, which exercises the deepest-category 301 rule.</p>",
+          "seoTitle": "Archived Vase | OpenStore Demo Store",
+          "seoDescription": "A discontinued hand-thrown ceramic vase."
+        }
+      ],
+      "categories": [ "fx-cat-home", "fx-arch-repl-cat" ],
+      "attributes": [
+        { "code": "material", "option": "ceramic" },
+        { "code": "care", "option": "hand" }
+      ],
+      "variants": [
+        { "sku": "FX-ARCH-REPL-STD", "axes": [], "amountMinor": 15900, "currency": "CNY", "onHand": 5, "reserved": 0, "sold": 0 }
+      ],
+      "images": [
+        {
+          "file": "fx-arch-repl-1.png",
+          "sortOrder": 0,
+          "altByLocale": { "zh-Hans": "手工陶瓷花瓶照片", "en": "Photo of a hand-thrown ceramic vase" }
+        }
+      ]
+    },
+    {
+      "key": "fx-arch-orphan",
+      "internalCode": "FIXTURE",
+      "status": "Archived",
+      "translations": [
+        {
+          "locale": "zh-Hans",
+          "slug": "fx-arch-orphan",
+          "name": "归档孤品挂件（无替代分类）",
+          "shortDescription": "已下架；不归属任何分类。",
+          "description": "<p>孤品挂件，已下架，归档时未归属任何分类，用于验证 410。</p>",
+          "seoTitle": "归档孤品挂件｜OpenStore 示例店",
+          "seoDescription": "已下架的孤品挂件。"
+        },
+        {
+          "locale": "en",
+          "slug": "fx-arch-orphan",
+          "name": "Archived Orphan Pendant (no replacement category)",
+          "shortDescription": "Discontinued; it never belonged to any category.",
+          "description": "<p>One-off pendant, discontinued. It belonged to no category when archived, which exercises the 410 response.</p>",
+          "seoTitle": "Archived Orphan Pendant | OpenStore Demo Store",
+          "seoDescription": "A discontinued one-off pendant."
+        }
+      ],
+      "categories": [],
+      "attributes": [
+        { "code": "material", "option": "cotton" },
+        { "code": "care", "option": "hand" }
+      ],
+      "variants": [
+        { "sku": "FX-ARCH-ORPHAN-STD", "axes": [], "amountMinor": 4900, "currency": "CNY", "onHand": 4, "reserved": 0, "sold": 0 }
+      ],
+      "images": [
+        {
+          "file": "fx-arch-orphan-1.png",
+          "sortOrder": 0,
+          "altByLocale": { "zh-Hans": "孤品挂件照片", "en": "Photo of a one-off pendant" }
+        }
+      ]
+    }
+  ]
+}

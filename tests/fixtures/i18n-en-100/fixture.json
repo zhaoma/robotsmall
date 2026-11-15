@@ -1,0 +1,21 @@
+{
+  "namespace": "i18n-en-100",
+  "internalCode": "FIXTURE",
+  "locales": [
+    { "code": "zh-Hans", "isDefault": true },
+    { "code": "en" }
+  ],
+  "currency": "CNY",
+  "publicSiteUrl": "https://shop.example.com",
+  "probe": {
+    "tier": "fallback",
+    "target": { "productKey": "fx-mug", "locale": "en", "field": "description" }
+  },
+  "files": [
+    "categories.json",
+    "attributes.json",
+    "products.json",
+    "static-pages.json",
+    "slug-history.json"
+  ]
+}

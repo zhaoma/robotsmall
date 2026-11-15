@@ -1,0 +1,48 @@
+{
+  "categories": [
+    {
+      "key": "fx-cat-apparel",
+      "parent": null,
+      "sortOrder": 0,
+      "translations": [
+        { "locale": "zh-Hans", "slug": "fx-cat-apparel", "name": "服饰", "description": "上装、外套与配饰。" },
+        { "locale": "en", "slug": "fx-cat-apparel", "name": "Apparel", "description": "Tops, outerwear and accessories." }
+      ]
+    },
+    {
+      "key": "fx-cat-apparel-tops",
+      "parent": "fx-cat-apparel",
+      "sortOrder": 0,
+      "translations": [
+        { "locale": "zh-Hans", "slug": "fx-cat-apparel-tops", "name": "上装", "description": "T恤、衬衫与卫衣。" },
+        { "locale": "en", "slug": "fx-cat-apparel-tops", "name": "Tops", "description": "T-shirts, shirts and sweatshirts." }
+      ]
+    },
+    {
+      "key": "fx-cat-home",
+      "parent": null,
+      "sortOrder": 1,
+      "translations": [
+        { "locale": "zh-Hans", "slug": "fx-cat-home", "name": "家居", "description": "厨房、餐桌与日用器皿。" },
+        { "locale": "en", "slug": "fx-cat-home", "name": "Home", "description": "Kitchen, tableware and everyday objects." }
+      ]
+    },
+    {
+      "key": "fx-cat-zhonly",
+      "parent": null,
+      "sortOrder": 2,
+      "translations": [
+        { "locale": "zh-Hans", "slug": "fx-cat-zhonly", "name": "仅中文分类", "description": "该分类刻意没有英文译文，用于验证页级 404。" }
+      ]
+    },
+    {
+      "key": "fx-arch-repl-cat",
+      "parent": "fx-cat-home",
+      "sortOrder": 0,
+      "translations": [
+        { "locale": "zh-Hans", "slug": "fx-arch-repl-cat", "name": "家居摆件", "description": "花瓶、烛台与小型摆件。" },
+        { "locale": "en", "slug": "fx-arch-repl-cat", "name": "Home Decor", "description": "Vases, candle holders and small objects." }
+      ]
+    }
+  ]
+}

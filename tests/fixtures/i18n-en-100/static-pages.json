@@ -1,0 +1,48 @@
+{
+  "staticPages": [
+    {
+      "key": "fx-page-about",
+      "status": "Published",
+      "translations": [
+        {
+          "locale": "zh-Hans",
+          "slug": "guanyu",
+          "title": "关于我们",
+          "body": "<p>这是一家示例店。本页用于验证静态页的逐语种 slug 与全译覆盖率。</p>",
+          "seoTitle": "关于我们｜OpenStore 示例店",
+          "seoDescription": "示例店的关于我们页面。"
+        },
+        {
+          "locale": "en",
+          "slug": "about",
+          "title": "About Us",
+          "body": "<p>This is a demo store. This page exercises per-locale static page slugs and full translation coverage.</p>",
+          "seoTitle": "About Us | OpenStore Demo Store",
+          "seoDescription": "The about page of the demo store."
+        }
+      ]
+    },
+    {
+      "key": "fx-page-shipping",
+      "status": "Published",
+      "translations": [
+        {
+          "locale": "zh-Hans",
+          "slug": "peisong",
+          "title": "配送说明",
+          "body": "<p>订单在付款后 1 个工作日内发出，偏远地区顺延。</p>",
+          "seoTitle": "配送说明｜OpenStore 示例店",
+          "seoDescription": "示例店的配送说明。"
+        },
+        {
+          "locale": "en",
+          "slug": "shipping",
+          "title": "Shipping",
+          "body": "<p>Orders ship within one business day of payment; remote areas may take longer.</p>",
+          "seoTitle": "Shipping | OpenStore Demo Store",
+          "seoDescription": "Shipping information for the demo store."
+        }
+      ]
+    }
+  ]
+}

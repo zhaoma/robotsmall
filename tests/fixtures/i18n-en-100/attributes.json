@@ -1,0 +1,84 @@
+{
+  "attributes": [
+    {
+      "key": "fx-attr-material",
+      "code": "material",
+      "sortOrder": 0,
+      "isFilterable": true,
+      "isVariantAxis": false,
+      "translations": [
+        { "locale": "zh-Hans", "name": "材质" },
+        { "locale": "en", "name": "Material" }
+      ],
+      "options": [
+        { "code": "cotton", "sortOrder": 0, "translations": [ { "locale": "zh-Hans", "label": "棉" }, { "locale": "en", "label": "Cotton" } ] },
+        { "code": "polyester", "sortOrder": 1, "translations": [ { "locale": "zh-Hans", "label": "聚酯纤维" }, { "locale": "en", "label": "Polyester" } ] },
+        { "code": "ceramic", "sortOrder": 2, "translations": [ { "locale": "zh-Hans", "label": "陶瓷" }, { "locale": "en", "label": "Ceramic" } ] },
+        { "code": "steel", "sortOrder": 3, "translations": [ { "locale": "zh-Hans", "label": "不锈钢" }, { "locale": "en", "label": "Stainless Steel" } ] },
+        { "code": "canvas", "sortOrder": 4, "translations": [ { "locale": "zh-Hans", "label": "帆布" }, { "locale": "en", "label": "Canvas" } ] }
+      ]
+    },
+    {
+      "key": "fx-attr-care",
+      "code": "care",
+      "sortOrder": 1,
+      "isFilterable": true,
+      "isVariantAxis": false,
+      "translations": [
+        { "locale": "zh-Hans", "name": "洗涤方式" },
+        { "locale": "en", "name": "Care" }
+      ],
+      "options": [
+        { "code": "machine", "sortOrder": 0, "translations": [ { "locale": "zh-Hans", "label": "机洗" }, { "locale": "en", "label": "Machine Wash" } ] },
+        { "code": "hand", "sortOrder": 1, "translations": [ { "locale": "zh-Hans", "label": "手洗" }, { "locale": "en", "label": "Hand Wash" } ] },
+        { "code": "dryclean", "sortOrder": 2, "translations": [ { "locale": "zh-Hans", "label": "干洗" }, { "locale": "en", "label": "Dry Clean" } ] }
+      ]
+    },
+    {
+      "key": "fx-attr-capacity",
+      "code": "capacity",
+      "sortOrder": 2,
+      "isFilterable": false,
+      "isVariantAxis": true,
+      "translations": [
+        { "locale": "zh-Hans", "name": "容量" },
+        { "locale": "en", "name": "Capacity" }
+      ],
+      "options": [
+        { "code": "350ml", "sortOrder": 0, "translations": [ { "locale": "zh-Hans", "label": "350 毫升" }, { "locale": "en", "label": "350 ml" } ] },
+        { "code": "500ml", "sortOrder": 1, "translations": [ { "locale": "zh-Hans", "label": "500 毫升" }, { "locale": "en", "label": "500 ml" } ] }
+      ]
+    },
+    {
+      "key": "fx-attr-color",
+      "code": "color",
+      "sortOrder": 3,
+      "isFilterable": false,
+      "isVariantAxis": true,
+      "translations": [
+        { "locale": "zh-Hans", "name": "颜色" },
+        { "locale": "en", "name": "Color" }
+      ],
+      "options": [
+        { "code": "black", "sortOrder": 0, "translations": [ { "locale": "zh-Hans", "label": "黑色" }, { "locale": "en", "label": "Black" } ] },
+        { "code": "white", "sortOrder": 1, "translations": [ { "locale": "zh-Hans", "label": "白色" }, { "locale": "en", "label": "White" } ] },
+        { "code": "sand", "sortOrder": 2, "translations": [ { "locale": "zh-Hans", "label": "沙色" }, { "locale": "en", "label": "Sand" } ] }
+      ]
+    },
+    {
+      "key": "fx-attr-size",
+      "code": "size",
+      "sortOrder": 4,
+      "isFilterable": false,
+      "isVariantAxis": true,
+      "translations": [
+        { "locale": "zh-Hans", "name": "尺码" },
+        { "locale": "en", "name": "Size" }
+      ],
+      "options": [
+        { "code": "m", "sortOrder": 0, "translations": [ { "locale": "zh-Hans", "label": "中号" }, { "locale": "en", "label": "Medium" } ] },
+        { "code": "l", "sortOrder": 1, "translations": [ { "locale": "zh-Hans", "label": "大号" }, { "locale": "en", "label": "Large" } ] }
+      ]
+    }
+  ]
+}
