@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OpenStore.ArchitectureTests</RootNamespace>
+    <!-- 源码扫描类测试在运行时向上找 OpenStore.sln 定位仓库根，见 RepoLayout.cs -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 四个程序集都要能以反射方式加载，且保证构建顺序 -->
+    <ProjectReference Include="..\..\src\OpenStore.Domain\OpenStore.Domain.csproj" />
+    <ProjectReference Include="..\..\src\OpenStore.Application\OpenStore.Application.csproj" />
+    <ProjectReference Include="..\..\src\OpenStore.Infrastructure\OpenStore.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\OpenStore.Api\OpenStore.Api.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="NetArchTest.Rules" />
+    <PackageReference Include="Shouldly" />
+  </ItemGroup>
+
+</Project>

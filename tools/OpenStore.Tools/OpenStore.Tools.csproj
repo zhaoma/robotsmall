@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    独立的工程门禁工具。刻意与 src/ 下的四个项目解耦：
+      1) 它不引用任何 OpenStore.* 程序集 —— 门禁必须是"外部审查者"，不能靠被测代码自证。
+      2) <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>：仓库根有
+         Directory.Packages.props 做中央包管理，而本项目的包生命周期与后端无关（工具要能在
+         后端还没编译通过时先跑起来）。关掉中央管理后 PackageReference 自带 Version，互不干扰。
+    TargetFramework / Nullable / ImplicitUsings / TreatWarningsAsErrors 一律继承仓库根的
+    Directory.Build.props（net8.0 + 零警告），不在本文件覆盖。
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>OpenStore.Tools</RootNamespace>
+    <AssemblyName>OpenStore.Tools</AssemblyName>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <IsPackable>false</IsPackable>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="JsonSchema.Net" Version="8.0.5" />
+    <PackageReference Include="System.CommandLine" Version="2.0.0" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>OpenStore.Api</RootNamespace>
+  </PropertyGroup>
+
+  <!-- 组合根：只向下依赖 Infrastructure（并透过它看到 Application / Domain）。Api 不被任何项目引用。 -->
+  <ItemGroup>
+    <ProjectReference Include="..\OpenStore.Infrastructure\OpenStore.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

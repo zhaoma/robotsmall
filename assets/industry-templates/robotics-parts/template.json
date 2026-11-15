@@ -1,0 +1,293 @@
+{
+  "formatVersion": 1,
+  "key": "robotics-parts",
+  "name": "桌面机器人配件",
+  "description": "桌面级机器人机架、机械臂、夹爪、传感器与电源配件的示例目录与属性集。",
+  "defaults": {
+    "currency": "CNY",
+    "locale": "zh",
+    "themeId": "base",
+    "weightUnit": "g",
+    "timezone": "Asia/Shanghai",
+    "currencyDecimals": 2,
+    "themeTokens": {
+      "color.primary": "#1f2937",
+      "font.sans": "Inter, ui-sans-serif, system-ui, sans-serif"
+    }
+  },
+  "attributes": [
+    {
+      "code": "compatibility",
+      "labelKey": "attr.compatibility.label",
+      "dataType": "enum",
+      "scope": "variant",
+      "variantAxis": true,
+      "multiple": true,
+      "filterable": true,
+      "options": [
+        { "code": "rpi4", "labelKey": "attr.compatibility.option.rpi4", "sortOrder": 1 },
+        { "code": "rpi5", "labelKey": "attr.compatibility.option.rpi5", "sortOrder": 2 },
+        { "code": "jetson_orin", "labelKey": "attr.compatibility.option.jetson_orin", "sortOrder": 3 },
+        { "code": "x86_ubuntu", "labelKey": "attr.compatibility.option.x86_ubuntu", "sortOrder": 4 },
+        { "code": "arduino_uno", "labelKey": "attr.compatibility.option.arduino_uno", "sortOrder": 5 }
+      ]
+    },
+    {
+      "code": "interface",
+      "labelKey": "attr.interface.label",
+      "dataType": "enum",
+      "scope": "variant",
+      "variantAxis": true,
+      "multiple": false,
+      "filterable": true,
+      "options": [
+        { "code": "usb", "labelKey": "attr.interface.option.usb", "sortOrder": 1 },
+        { "code": "uart", "labelKey": "attr.interface.option.uart", "sortOrder": 2 },
+        { "code": "can", "labelKey": "attr.interface.option.can", "sortOrder": 3 },
+        { "code": "i2c", "labelKey": "attr.interface.option.i2c", "sortOrder": 4 }
+      ]
+    },
+    {
+      "code": "payload_kg",
+      "labelKey": "attr.payload_kg.label",
+      "dataType": "number",
+      "scope": "product",
+      "variantAxis": false,
+      "multiple": false,
+      "filterable": true,
+      "unit": "kg"
+    },
+    {
+      "code": "reach_mm",
+      "labelKey": "attr.reach_mm.label",
+      "dataType": "number",
+      "scope": "product",
+      "variantAxis": false,
+      "multiple": false,
+      "filterable": true,
+      "unit": "mm"
+    },
+    {
+      "code": "material",
+      "labelKey": "attr.material.label",
+      "dataType": "enum",
+      "scope": "product",
+      "variantAxis": false,
+      "multiple": false,
+      "filterable": true,
+      "options": [
+        { "code": "aluminum", "labelKey": "attr.material.option.aluminum", "sortOrder": 1 },
+        { "code": "carbon", "labelKey": "attr.material.option.carbon", "sortOrder": 2 },
+        { "code": "steel", "labelKey": "attr.material.option.steel", "sortOrder": 3 },
+        { "code": "abs", "labelKey": "attr.material.option.abs", "sortOrder": 4 }
+      ]
+    },
+    {
+      "code": "voltage_v",
+      "labelKey": "attr.voltage_v.label",
+      "dataType": "number",
+      "scope": "product",
+      "variantAxis": false,
+      "multiple": false,
+      "filterable": true,
+      "unit": "V"
+    },
+    {
+      "code": "capacity_mah",
+      "labelKey": "attr.capacity_mah.label",
+      "dataType": "number",
+      "scope": "product",
+      "variantAxis": false,
+      "multiple": false,
+      "filterable": false,
+      "unit": "mAh"
+    }
+  ],
+  "attributeSets": [
+    {
+      "code": "structure",
+      "labelKey": "set.structure.label",
+      "attributes": ["compatibility", "interface", "payload_kg", "reach_mm", "material"]
+    },
+    {
+      "code": "electronics",
+      "labelKey": "set.electronics.label",
+      "attributes": ["compatibility", "interface", "voltage_v", "capacity_mah"]
+    }
+  ],
+  "categories": [
+    {
+      "key": "frames",
+      "labelKey": "category.frames.label",
+      "attributeSet": "structure",
+      "sortOrder": 1,
+      "products": [
+        {
+          "key": "frame_mini",
+          "nameKey": "product.frame_mini.name",
+          "categoryKey": "frames",
+          "basePriceCents": 39900,
+          "variantAxes": ["compatibility", "interface"],
+          "variantOptions": {
+            "compatibility": ["rpi4", "rpi5", "arduino_uno"],
+            "interface": ["usb", "uart", "i2c"]
+          },
+          "attributeCodes": ["payload_kg", "material"]
+        },
+        {
+          "key": "frame_pro",
+          "nameKey": "product.frame_pro.name",
+          "categoryKey": "frames",
+          "basePriceCents": 89900,
+          "variantAxes": ["compatibility", "interface"],
+          "variantOptions": {
+            "compatibility": ["rpi5", "jetson_orin", "x86_ubuntu"],
+            "interface": ["usb", "uart", "can"]
+          },
+          "attributeCodes": ["payload_kg", "material"]
+        }
+      ]
+    },
+    {
+      "key": "arms",
+      "labelKey": "category.arms.label",
+      "attributeSet": "structure",
+      "sortOrder": 2,
+      "products": [
+        {
+          "key": "arm_4dof",
+          "nameKey": "product.arm_4dof.name",
+          "categoryKey": "arms",
+          "basePriceCents": 189900,
+          "variantAxes": ["compatibility", "interface"],
+          "variantOptions": {
+            "compatibility": ["rpi5", "jetson_orin"],
+            "interface": ["uart", "can"]
+          },
+          "attributeCodes": ["payload_kg", "reach_mm", "material"]
+        },
+        {
+          "key": "arm_6dof",
+          "nameKey": "product.arm_6dof.name",
+          "categoryKey": "arms",
+          "basePriceCents": 459900,
+          "variantAxes": ["compatibility", "interface"],
+          "variantOptions": {
+            "compatibility": ["jetson_orin", "x86_ubuntu"],
+            "interface": ["can", "usb"]
+          },
+          "attributeCodes": ["payload_kg", "reach_mm", "material"]
+        }
+      ]
+    },
+    {
+      "key": "grippers",
+      "labelKey": "category.grippers.label",
+      "attributeSet": "structure",
+      "sortOrder": 3,
+      "products": [
+        {
+          "key": "gripper_parallel",
+          "nameKey": "product.gripper_parallel.name",
+          "categoryKey": "grippers",
+          "basePriceCents": 69900,
+          "variantAxes": ["compatibility", "interface"],
+          "variantOptions": {
+            "compatibility": ["rpi5", "arduino_uno"],
+            "interface": ["usb", "uart"]
+          },
+          "attributeCodes": ["payload_kg", "material"]
+        },
+        {
+          "key": "gripper_vacuum",
+          "nameKey": "product.gripper_vacuum.name",
+          "categoryKey": "grippers",
+          "basePriceCents": 45900,
+          "variantAxes": ["interface"],
+          "variantOptions": {
+            "interface": ["uart", "i2c"]
+          },
+          "attributeCodes": ["payload_kg", "material"]
+        }
+      ]
+    },
+    {
+      "key": "sensors",
+      "labelKey": "category.sensors.label",
+      "attributeSet": "electronics",
+      "sortOrder": 4,
+      "products": [
+        {
+          "key": "sensor_lidar",
+          "nameKey": "product.sensor_lidar.name",
+          "categoryKey": "sensors",
+          "basePriceCents": 129900,
+          "variantAxes": ["compatibility", "interface"],
+          "variantOptions": {
+            "compatibility": ["rpi5", "jetson_orin", "x86_ubuntu"],
+            "interface": ["usb", "uart"]
+          },
+          "attributeCodes": ["voltage_v"]
+        },
+        {
+          "key": "sensor_imu",
+          "nameKey": "product.sensor_imu.name",
+          "categoryKey": "sensors",
+          "basePriceCents": 8900,
+          "variantAxes": ["interface"],
+          "variantOptions": {
+            "interface": ["i2c", "uart"]
+          },
+          "attributeCodes": ["voltage_v"]
+        }
+      ]
+    },
+    {
+      "key": "power",
+      "labelKey": "category.power.label",
+      "attributeSet": "electronics",
+      "sortOrder": 5,
+      "products": [
+        {
+          "key": "power_psu_24v",
+          "nameKey": "product.power_psu_24v.name",
+          "categoryKey": "power",
+          "basePriceCents": 25900,
+          "variantAxes": ["interface"],
+          "variantOptions": {
+            "interface": ["usb", "uart"]
+          },
+          "attributeCodes": ["voltage_v"]
+        },
+        {
+          "key": "power_battery_pack",
+          "nameKey": "product.power_battery_pack.name",
+          "categoryKey": "power",
+          "basePriceCents": 49900,
+          "variantAxes": ["interface"],
+          "variantOptions": {
+            "interface": ["usb"]
+          },
+          "attributeCodes": ["voltage_v", "capacity_mah"]
+        }
+      ]
+    }
+  ],
+  "shippingZones": [
+    {
+      "key": "cn_mainland",
+      "labelKey": "shipping.cn_mainland.label",
+      "countries": ["CN"],
+      "flatRateCents": 1200,
+      "freeOverCents": 29900
+    }
+  ],
+  "taxRules": [
+    {
+      "country": "CN",
+      "rateBps": 1300,
+      "labelKey": "tax.cn.label",
+      "includesTax": true
+    }
+  ]
+}

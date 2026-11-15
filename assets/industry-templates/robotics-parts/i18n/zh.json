@@ -1,0 +1,51 @@
+{
+  "template.name": "桌面机器人配件",
+  "template.description": "桌面级机器人机架、机械臂、夹爪、传感器与电源配件的示例目录与属性集。",
+
+  "category.frames.label": "机架",
+  "category.arms.label": "机械臂",
+  "category.grippers.label": "夹爪",
+  "category.sensors.label": "传感器",
+  "category.power.label": "电源",
+
+  "set.structure.label": "结构件属性",
+  "set.electronics.label": "电子件属性",
+
+  "attr.compatibility.label": "兼容主控",
+  "attr.compatibility.option.rpi4": "树莓派 4B",
+  "attr.compatibility.option.rpi5": "树莓派 5",
+  "attr.compatibility.option.jetson_orin": "Jetson Orin Nano",
+  "attr.compatibility.option.x86_ubuntu": "x86 工控机（Ubuntu）",
+  "attr.compatibility.option.arduino_uno": "Arduino Uno",
+
+  "attr.interface.label": "接口类型",
+  "attr.interface.option.usb": "USB",
+  "attr.interface.option.uart": "UART 串口",
+  "attr.interface.option.can": "CAN 总线",
+  "attr.interface.option.i2c": "I2C",
+
+  "attr.payload_kg.label": "额定负载",
+  "attr.reach_mm.label": "工作半径",
+  "attr.voltage_v.label": "工作电压",
+  "attr.capacity_mah.label": "电池容量",
+
+  "attr.material.label": "主体材质",
+  "attr.material.option.aluminum": "6061 铝合金",
+  "attr.material.option.carbon": "碳纤维",
+  "attr.material.option.steel": "不锈钢",
+  "attr.material.option.abs": "ABS 工程塑料",
+
+  "product.frame_mini.name": "Mini 铝合金机架",
+  "product.frame_pro.name": "Pro 碳纤维机架",
+  "product.arm_4dof.name": "四自由度机械臂",
+  "product.arm_6dof.name": "六自由度协作机械臂",
+  "product.gripper_parallel.name": "平行夹爪",
+  "product.gripper_vacuum.name": "真空吸盘夹爪",
+  "product.sensor_lidar.name": "2D 激光雷达",
+  "product.sensor_imu.name": "九轴 IMU 模块",
+  "product.power_psu_24v.name": "24V 稳压电源",
+  "product.power_battery_pack.name": "移动电源包",
+
+  "shipping.cn_mainland.label": "中国大陆",
+  "tax.cn.label": "中国大陆增值税"
+}

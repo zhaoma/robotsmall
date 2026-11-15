@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OpenStore.Domain</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    这个 ItemGroup 必须永远为空。
+    Domain 零第三方依赖是硬约束（架构 §1.1 / 后端设计 §1.1 五条硬禁止 #1）：
+    它连 Microsoft.Extensions.* 都不该有，更不允许 EF Core / ASP.NET Core。
+    门禁 Category=Layering 会在编译成功后用一个"只允许 System.*"的程序集白名单把这层焊死。
+  -->
+
+</Project>

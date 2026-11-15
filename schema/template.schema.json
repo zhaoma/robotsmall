@@ -1,0 +1,277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openstore.dev/schema/template.schema.json",
+  "title": "OpenStore 行业模板清单 (template.json)",
+  "description": "行业模板是内容文件，不是代码。一个模板目录 = template.json + i18n/{locale}.json (+ media/)。本 schema 只约束结构与类型；跨对象引用完整性（attributeSet / attributeCode / categoryKey / i18n 键）由 tools/OpenStore.Tools 的 check-templates 校验，因为 JSON Schema 表达不了跨节点引用。",
+  "type": "object",
+  "required": ["formatVersion", "key", "name", "defaults", "attributes", "attributeSets", "categories"],
+  "additionalProperties": false,
+  "properties": {
+    "formatVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "模板清单格式版本。宿主只接受自己认识的范围（工具内常量 SupportedFormatVersions），不认识则拒绝安装而不是静默降级。"
+    },
+    "key": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,31}$",
+      "description": "模板标识，也是目录名，必须与 assets/industry-templates/<key>/ 一致。"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "默认语种（defaults.locale）的展示名，落库时作为翻译的种子；其余语种由 i18n/ 覆盖。"
+    },
+    "description": {
+      "type": "string",
+      "description": "安装向导里的一句话说明，默认语种。"
+    },
+    "defaults": {
+      "type": "object",
+      "required": ["currency", "locale", "themeId"],
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "description": "ISO 4217，如 CNY / USD。"
+        },
+        "locale": {
+          "type": "string",
+          "pattern": "^[a-z]{2}(-[A-Za-z]{2,4})?$",
+          "description": "默认语种，必须存在对应的 i18n/<locale>.json，且它是键集合的基准。"
+        },
+        "themeId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "默认主题 id，必须在 themes/<themeId>/theme.manifest.json 存在（check-templates 校验 THEME_NOT_FOUND）。"
+        },
+        "themeTokens": {
+          "type": "object",
+          "description": "主题 token 预设（三层覆盖的中间层）：扁平点分键 → CSS 值。键必须存在于该主题的 editable.schema.json 白名单内。",
+          "propertyNames": { "pattern": "^[a-z][a-z0-9]*(\\.[a-z0-9]+)+$" },
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "weightUnit": {
+          "type": "string",
+          "enum": ["g", "kg"]
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "currencyDecimals": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        }
+      }
+    },
+    "attributes": {
+      "type": "array",
+      "minItems": 1,
+      "description": "属性定义全集（扁平一张表，不是 EAV）。分类通过 attributeSet 引用它们。",
+      "items": { "$ref": "#/$defs/attribute" }
+    },
+    "attributeSets": {
+      "type": "array",
+      "minItems": 1,
+      "description": "属性集：分类继承的单位。分类 → 属性集 → 属性定义，避免每个分类重复列一遍属性。",
+      "items": { "$ref": "#/$defs/attributeSet" }
+    },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "description": "分类树用邻接表（parentKey）表达，不是嵌套 children —— 与 Category 表的 ParentId 同构，导入时逐层排序即可。",
+      "items": { "$ref": "#/$defs/category" }
+    },
+    "shippingZones": {
+      "type": "array",
+      "description": "运费区预设（安装向导可改），按国家码分组。",
+      "items": {
+        "type": "object",
+        "required": ["key", "labelKey", "countries"],
+        "additionalProperties": false,
+        "properties": {
+          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,31}$" },
+          "labelKey": { "$ref": "#/$defs/i18nKey" },
+          "countries": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "pattern": "^[A-Z]{2}$" }
+          },
+          "flatRateCents": { "type": "integer", "minimum": 0 },
+          "freeOverCents": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "taxRules": {
+      "type": "array",
+      "description": "税率预设，按国家/地区码。金额一律整数分，禁止浮点。",
+      "items": {
+        "type": "object",
+        "required": ["country", "rateBps", "labelKey"],
+        "additionalProperties": false,
+        "properties": {
+          "country": { "type": "string", "pattern": "^[A-Z]{2}$" },
+          "rateBps": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "基点（bps）：1300 = 13.00%" },
+          "labelKey": { "$ref": "#/$defs/i18nKey" },
+          "includesTax": { "type": "boolean" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,31}$",
+      "description": "稳定的机器可读标识，一旦上线不允许改名（改名等于换标识，靠新字段 + 迁移回填）。"
+    },
+    "i18nKey": {
+      "type": "string",
+      "pattern": "^[a-z][a-zA-Z0-9]*(\\.[a-zA-Z0-9_]+)+$",
+      "description": "指向 i18n/<locale>.json 的扁平点分键，如 attr.size.option.M。check-templates 校验其在基准语种中存在。"
+    },
+    "optionCode": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_]{0,15}$",
+      "description": "选项码允许单字符（尺码 s/m/l 是合法领域值），但仍限定小写字母数字下划线。"
+    },
+    "option": {
+      "type": "object",
+      "required": ["code", "labelKey"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "$ref": "#/$defs/optionCode" },
+        "labelKey": { "$ref": "#/$defs/i18nKey" },
+        "sortOrder": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "attribute": {
+      "type": "object",
+      "required": ["code", "labelKey", "dataType", "scope"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "$ref": "#/$defs/code" },
+        "labelKey": { "$ref": "#/$defs/i18nKey" },
+        "dataType": {
+          "type": "string",
+          "enum": ["enum", "number", "text", "bool"],
+          "description": "enum 落 AttributeOption + ProductAttributeValue.OptionId；number 落 NumberValue + Unit；text 落 TextValue；bool 落 BoolValue。"
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["product", "variant"],
+          "description": "product = 商品级取值；variant = 参与变体矩阵（还要 variantAxis=true 才会被用作轴）。"
+        },
+        "variantAxis": {
+          "type": "boolean",
+          "default": false,
+          "description": "是否允许被商品的 variantAxes 引用。scope=variant 且 variantAxis=true 才可用于矩阵。"
+        },
+        "multiple": {
+          "type": "boolean",
+          "default": false,
+          "description": "仅 enum：是否多选（如配件兼容机型）。注意语义风险：多选属性的值域是集合，而一个 SKU 只能落一个选项，因此把多选属性当变体轴会让矩阵语义含混。M0 不拦（模板作者自担），但推荐做法是轴只用单值属性，多选属性走 product 级 + filterable。"
+        },
+        "filterable": {
+          "type": "boolean",
+          "default": false,
+          "description": "是否进列表页 facet 与筛选索引。默认 false，避免所有属性都变筛选项把查询拖死。"
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 8,
+          "description": "仅 dataType=number：payload_kg → kg、reach_mm → mm。单位进列而不进值，便于范围查询与换算。"
+        },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "description": "仅 dataType=enum 必填。",
+          "items": { "$ref": "#/$defs/option" }
+        }
+      }
+    },
+    "attributeSet": {
+      "type": "object",
+      "required": ["code", "labelKey", "attributes"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "$ref": "#/$defs/code" },
+        "labelKey": { "$ref": "#/$defs/i18nKey" },
+        "attributes": {
+          "type": "array",
+          "minItems": 1,
+          "description": "成员属性 code 列表；重复声明会在 AttributeSetMember 复合主键上撞唯一约束，故 uniqueItems。",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/code" }
+        }
+      }
+    },
+    "category": {
+      "type": "object",
+      "required": ["key", "labelKey", "attributeSet", "products"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "$ref": "#/$defs/code" },
+        "labelKey": { "$ref": "#/$defs/i18nKey" },
+        "parentKey": {
+          "$ref": "#/$defs/code",
+          "description": "邻接表父节点；缺省为根分类。"
+        },
+        "attributeSet": {
+          "$ref": "#/$defs/code",
+          "description": "本分类挂载的属性集 code，必须在 attributeSets 中存在。成员可被本分类商品引用。"
+        },
+        "sortOrder": { "type": "integer", "minimum": 0 },
+        "products": {
+          "type": "array",
+          "description": "示例商品：给安装后的空店铺一点可看的内容，同时充当模板自检的活样本。",
+          "items": { "$ref": "#/$defs/product" }
+        }
+      }
+    },
+    "product": {
+      "type": "object",
+      "required": ["key", "nameKey", "categoryKey", "basePriceCents", "variantAxes", "attributeCodes"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "$ref": "#/$defs/code" },
+        "nameKey": { "$ref": "#/$defs/i18nKey" },
+        "categoryKey": {
+          "$ref": "#/$defs/code",
+          "description": "所属分类。商品物理上嵌在 category.products 内，此字段必须与父节点 key 一致（防止搬动商品时留下旧值）。"
+        },
+        "basePriceCents": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "整数分（minor units）。禁止浮点与字符串金额。"
+        },
+        "variantAxes": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "description": "变体轴 attribute code 列表（≤3，与 ProductVariantAxis 约束一致）。每个 code 必须在父分类的 attributeSet 内且该属性 variantAxis=true。",
+          "items": { "$ref": "#/$defs/code" }
+        },
+        "attributeCodes": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "本商品填了值的商品级属性 code（必须在父分类 attributeSet 内）。",
+          "items": { "$ref": "#/$defs/code" }
+        },
+        "variantOptions": {
+          "type": "object",
+          "description": "每个变体轴实际取哪些选项：轴 code → 选项 code 数组。缺省视为取该属性全部选项。",
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]{1,31}$" },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/optionCode" }
+          }
+        }
+      }
+    }
+  }
+}

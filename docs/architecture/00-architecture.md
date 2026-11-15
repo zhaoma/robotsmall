@@ -1,10 +1,14 @@
 # OpenStore 总体架构方案（Phase 1）
 
 > 代号：OpenStore —— 可复用电商独立站母版
-> 版本：v1.4 / Phase 1 骨架交付（v1.1 对齐需求 6 条硬约束；v1.2 URL 全带前缀；v1.3 采纳前端评审 D-1~D-7 + `CanSell` 派生；**v1.4 对齐需求基线 v1.8，含 3 处推翻自己 v1.3 判断的修正**。变更记录与**已作废结论台账**见附录 B）
+> 版本：v1.7 / Phase 1 骨架交付（修订历史见附录 B；**正文不写需求版本号，只引用 AC 编号与台账 W 编号** —— 版本号永远在移动，W 编号永不复用）
 > 作者：梁承宇（系统架构师）
 > 下游消费者：数据建模师（表结构）、后端工程师（端点/实现）、前端工程师（页面/组件）、DevOps（部署）、QA（测试策略）
 > **本文件不包含**：数据库表结构 DDL、API 端点清单、页面清单 —— 由对应角色在本文约束下自行产出。
+>
+> **两条写法规则（与需求基线文件头对齐，治"翻到旧句子当现行结论"这个根因）**
+> 1. **物理分区**：正文只放**当前有效**结论；被推翻的句子从正文**删除**，只留在附录 B.5 台账里（带"作废了哪一版哪一句"）。读者可以**无条件信任正文**，不必交叉比对。
+> 2. **引用不复制**：凡验收判据、错误码清单、SEO 断言等"会被多处引用"的内容，只写"见需求 AC-xx / §6.1 Sn"，**不在本文复制一份**。复制省一次跳转，换来永久漂移 —— 本项目 6 处过时表述全部由此产生。
 
 ---
 
@@ -318,6 +322,7 @@ frontend/
 │  │  └─ src/
 │  │     ├─ routes/[locale]/+layout.server.ts     # 语种解析、主题与 token 注入、站点设置（[locale] 必填）
 │  │     ├─ routes/[locale]/+layout.svelte        # 选主题布局组件、挂载 svelte:head
+│  │     ├─ routes/[...rest]/+server.ts           # 缺前缀兜底：302 → /{defaultLocale}/{rest}（保留 query）
 │  │     ├─ routes/_preview/[locale]/…            # 主题草稿预览（noindex、no-store）
 │  │     ├─ lib/server/api.ts                     # 服务端调 .NET API 的 typed fetch（带超时/降级）
 │  │     └─ lib/themes/registry.ts                # import.meta.glob 主题静态注册表（仅 storefront）
@@ -336,6 +341,14 @@ frontend/
 **`[locale]` 是必填参数，不是 `[[locale]]`。** 这条不是风格问题：`[[locale]]` 在 SvelteKit 里语义就是"该段可省略"，等于在路由层承认"默认语种无前缀"，于是 `/products/x` 会真的返回 200 而不是 302 到 `/zh/products/x` —— 直接打穿 AC-11 的"缺前缀必须 302"。
 
 **只有一个语种时也不做退化分支**：即使客户砍掉英文站（需求 §5.3 第 2 项），`/{locale}/` 前缀仍然存在，只是 `EnabledLocales = [zh]`。理由：为"单语种"写退化逻辑意味着两套路由/两套 URL 生成/两套测试；而商家日后启用第二语种时（US-E3-01 允许），退化逻辑必须拆掉，届时所有已收录 URL 形态整体翻转。**`[locale]` 永远必填，语种数量只影响 `EnabledLocales` 的长度。**
+
+**缺前缀必须有一条兜底路由，否则 AC-11 规则 3 只兑现了根路径那一种情况。** `routes/[...rest]/+server.ts` 的职责：首段不是**已启用语种**时命中 → `redirect(302, /${defaultLocale}${pathname}${search})`。三条实现约束（前端 D-新 提出，我确认）：
+
+1. **必须 302，不能 301**。301 会被浏览器/CDN 永久缓存，日后调整前缀策略或某语种临时下线，就会留下一批无法回滚的永久跳转。这条不写，实现者十有八九顺手写 301。
+2. **必须保留查询串**。`/products/x?color=black` 缺前缀跳转若丢掉 query，用户的筛选状态就没了 —— 这是跳转实现里最常见的丢参数缺陷。
+3. **`/setup`、`/sitemap.xml`、`/robots.txt` 不得被兜底吃掉**。SvelteKit 里更具体的静态路由优先匹配，语义上天然成立，但**必须显式测一遍**（已进 QA 缺陷面清单），因为它是"框架保证"而非"我们保证"，升级或改路由布局时可能悄悄失效。
+
+**首段是"未启用的语种码"（例如只开 zh/en 时的 `/ja/...`）→ 直接 404，不做兜底 302。** 这条是语义选择，理由：把 `/ja/*` 302 到 `/zh/ja/*` 等于承认 `ja` 是一个有效路径段，搜索引擎会把整片 `/ja/*` 当作重复内容收录；404 明确表达"这个语种不存在"。**兜底路由只处理"首段压根不是语种码"的情况（如 `/products/x`）。**
 
 **为什么 apps 里两个 SvelteKit 而不是两个 Vite SPA**：一套框架、一套路由/构建/部署心智；admin 用 `ssr=false` + `adapter-static` 得到纯静态产物，零 Node 成本。这满足"两个独立入口"的要求（两个独立 app、两个独立构建产物、两个独立部署位置），同时避免引入第二种前端工具链。
 
@@ -563,7 +576,7 @@ t(key) = override[locale][key] ?? dict[locale][key] ?? dict[defaultLocale][key] 
 根路径          https://shop.example.com/  →  302  →  /zh/
 ```
 
-> 本条与需求基线 v1.1 变更 #2（US-E3-05 / AC-11）**强制对齐**：需求侧最终选择"全带前缀"，v1.0 讨论过的"默认语种可省前缀"方案已被删除。架构侧接受该裁决 —— 理由是路径唯一 → 缓存键唯一 → 无重复内容 → hreflang 一一映射，这是三件事同时成立的唯一形态；"URL 更短"的收益远小于它换来的去重风险。
+> 本条与 **AC-11 / US-E3-05** 强制对齐：需求侧最终选择"全带前缀"，早期讨论过的"默认语种可省前缀"方案已被删除。架构侧接受该裁决 —— 理由是路径唯一 → 缓存键唯一 → 无重复内容 → hreflang 一一映射，这是三件事同时成立的唯一形态；"URL 更短"的收益远小于它换来的去重风险。
 
 | 方案 | 判断 | 理由 |
 |---|---|---|
@@ -579,7 +592,8 @@ t(key) = override[locale][key] ?? dict[locale][key] ?? dict[defaultLocale][key] 
 - `/` → **302** 到 `/{默认语种}/`。
 - **任何前台路径缺少语言前缀 → 302 到带前缀的等价路径**（例：`/products/x` → `/zh/products/x`）。302 而非 301：默认语种将来可能变更，301 会被浏览器长期记住。
 - **canonical 指向自身**（当前语种的真实 URL）；**hreflang 输出全部已启用语种 + `x-default` 指向默认语种 URL**，双向互指（每页输出完整集合，不只输出"其他语言"）。
-- **slug 变更走 301**（旧 URL → 新 URL），需要落一张 slug 历史表；这与"缺前缀 302"是两条不同的规则，不要混。
+- **slug 变更走 301**（旧 URL → 新 URL），需要落一张 slug 历史表；这与"缺前缀 302"是两条不同的规则，不要混。**未登记的历史 URL 返回 404，绝不能"未命中就回落到列表页/首页（200）"** —— 后者会把每个不存在的 URL 变成软 404，爬虫会把大量垃圾 URL 当有效页收录（需求 AC-11 规则 4）。
+- **保留查询串**：缺前缀跳转（`/c/x?sort=price` → `/zh/c/x?sort=price`）与 slug 301 都必须带上原 query，否则用户的筛选/来源参数在跳转中丢失。
 - API 侧所有内容读接口统一接受 `locale` 参数（缺省 = `StoreSettings.DefaultLocale`）。语种列表来自 `StoreSettings.EnabledLocales`，**不是硬编码**。
 - slug 唯一性索引按 `(Locale, Slug)` —— "同一 slug 在 zh 与 en 下各存在一行"是合法且期望的。
 
@@ -723,21 +737,23 @@ stateDiagram-v2
 - 开发/运维逃生口：环境变量 `OPENSTORE_ALLOW_SETUP_RESET=true` 才允许在 Completed 后重置（默认关闭，防止商家误操作清站）。
 - 完成后的"再导入一个模板的样例商品"：**明确 YAGNI 不做**（那时需要 SeedBatchId 与冲突处理，留作 T+1）。
 
-**状态码口径（v1.4 按需求 v1.6 #29 定稿）** —— **页面与接口分开，不要混**：
+**状态码口径（四档定稿，不得混用；判据见 AC-01）** —— **页面与接口分开，不要混**：
 
-| 阶段 | `/setup` 前端页 | 安装写接口 |
-|---|---|---|
-| `Draft` / `Failed`（未安装） | 200 | **200**（可用） |
-| `Applying`（含崩溃残留） | 200（带 status） | **409 `SetupInProgress`** |
-| `Completed`，未开逃生口 | **404** | **409 `SetupAlreadyCompleted`** |
-| `Completed` + 逃生口启用 + 重置进行中 | 200（status=resetting） | **409 `SetupAlreadyCompleted`**（与上一行**同一个**错误码，保持到重置完成） |
-| 重置完成（回到 `Draft`） | 200 | **200**（可用） |
+| 阶段 | `/setup` 前端页 | 安装写接口 | 语义 |
+|---|---|---|---|
+| `Draft` / `Failed`（未安装） | 200 | **200**（可用） | 还没装，来吧 |
+| `Applying`（含崩溃残留） | 200（带 status） | **409 `SetupInProgress`** | **别插队** |
+| `Completed`，未开逃生口 | **404** | **409 `SetupAlreadyCompleted`** | **功能已没了**（页面）/ 已装好别再试（接口） |
+| `Completed` + 逃生口启用 + **重置进行中** | 200（status=resetting） | **503 + `Retry-After` + `SetupResetting`** | **正在重置，请等一下** |
+| 重置完成（回到 `Draft`） | 200 | **200**（可用） | 重来一遍 |
 
 三条口径细节：
 
-1. **`SetupAlreadyCompleted` / `SetupInProgress` 是契约的一部分**（写进 OpenAPI 错误码枚举），前端与运维脚本靠它判断，不靠 HTTP 状态码猜。**改错误码等于破坏契约。**
-2. **重置期间不是 503**：需求 v1.6 #29 明确"逃生口启用后、重置完成前保持同一 409"。真正的 503 只可能来自反向代理（进程/DB 正在重建、API 根本不可服务），那是**基础设施信号，不属于应用契约**。混用会让运维分不清"该改配置还是该看反代"。
-3. **`/setup` 页面 404 是独立规则**：页面完成后就是不存在，不给任何提示；接口则给出可编程的 409。这两条同时成立，正是"收敛攻击面"与"错误码稳定"各自该拿到的部分。
+1. **`SetupAlreadyCompleted` / `SetupInProgress` / `SetupResetting` 是契约的一部分**（写进 OpenAPI 错误码枚举），前端与运维脚本靠它判断，不靠 HTTP 状态码猜。**改错误码等于破坏契约。**
+2. **四档语义必须可区分：409 = 别插队 / 404 = 功能已没了 / 503 = 正在重置请等一下。** 不得用 409 表达"正在重置"：409 的语义是"已装好别再试"，用它说"等一下"会让运维把"服务不可用"误判成"已装好、只是被拒绝"，转去查一个根本不存在的权限问题 —— **这是最贵的一种误诊，因为它把人引向错误的方向**。
+3. **`/setup` 页面 404 是独立规则**：页面完成后就是不存在，不给任何提示；接口则给出可编程的 409 / 503。这两条同时成立，正是"收敛攻击面"与"错误码稳定"各自该拿到的部分。
+
+> **⚠️ 这一格我改错过两次，记录在案（详见附录 B.4 #3 与 B.5 W9/W22）**：v1.3 我写 503（对）→ v1.4 我推翻成 409，理由是"503 只可能来自反代，不属于应用契约"（错）→ v1.10 需求恢复 503 + `SetupResetting`（我 v1.3 的原判）。**我错在哪**：把"503 = 基础设施信号"当成了绝对命题，忽略了应用**自己**主动重建数据库时**就是**在拒绝服务，此时 503 是应用自己的语义而不是反代的。教训：**"某状态码只由某层产生"这类全称判断，几乎总是错的** —— 判断依据应该是"谁在制造这个事实"，而不是"这个码通常归谁"。这条也是我把 404 改成 409 时的同一个思维习惯（当时对、这次错），说明**方法对但结论不能靠习惯迁移**。
 
 #### 5.3.4 分类树 / 属性集 / 变体生成
 
@@ -756,11 +772,21 @@ public CompileResult Compile(IndustryTemplate tpl, string defaultLocale, IClock 
 
 1. **数据层**：`SetupState.Status=Completed`（唯一行），是所有判断的权威源。
 2. **应用层**：`InstallWizardService` 所有写方法首行 `EnsureNotCompleted()`。
-3. **端点层**：**写路由照常注册，但统一被 `SetupLockFilter` 拦截 → 409 `SetupAlreadyCompleted`**。
+3. **端点层**：**写路由照常注册，但统一被 `SetupLockFilter` 拦截** → `Completed` 且未开逃生口返回 **409 `SetupAlreadyCompleted`**；逃生口开启且重置进行中返回 **503 + `Retry-After` + `SetupResetting`**。
 
 > **v1.4 修正**：v1.3 写的是"按状态决定是否映射写路由 → 404 减少攻击面"。**这条与需求 AC-01 冲突**：需求要的是**稳定错误码 `SetupAlreadyCompleted`**（前端与运维脚本靠它判断），而"路由不注册"只能给出泛化的 404，无法携带错误码。取舍是：**收敛攻击面的收益 < 错误码稳定性的收益** —— 安装接口的 URL 本来就不是秘密，且未安装状态下它必须公开可达。
 >
 > 页面与接口分开：**`/setup` 前端页完成后 404**（收敛攻击面、不给任何提示），**安装写接口 409 `SetupAlreadyCompleted`**。两者语义不同，不要统一。
+>
+> **重置中那一档是 503 而不是 409**（见 AC-01 与需求台账 W22）：409 表达"已装好别再试"，用来表达"等一下"会让运维放弃排障。**共享同一个 `SetupLockFilter`，但两档返回不同状态码** —— 不要为了"过滤器只有一个返回值"把它们合并。
+
+> **判据（写进代码注释，不许实现者自行"优化"）**：
+>
+> **`SetupLockFilter` 永远挂在路由上，永不靠"不注册"来实现拒绝。因为路由表是启动时快照，安装状态是每请求事实，两者错配的症状是"安装入口永久失效且无报错"。**
+>
+> 展开一句为什么：**把"安装状态"编进"路由注册"，等于把一个动态事实冻结进启动时的静态表。** 安装状态是会变的 —— 恢复旧备份、清库重装、故障切换之后重来一遍，任何一种情况下**正在运行的进程仍然认为"写路由不存在"，而库里状态早已不是 `Completed`**，结果是安装入口再也打不开，**只能重启进程**，而重启的时机通常是"运维最慌的时候"。
+>
+> **这是同一类病的第三个变体，前两个是**：`SeoNoIndex` 的"忘了回滚"、正文写版本号的"忘了更新"。形态不同、病理相同 —— **都是"需要人工失效的缓存键"**。所以本项目凡是遇到"我能不能把这个动态事实缓存/固化一下"的问题，先问一句：**它失效的时候，谁负责让它失效？** 答不出人，就不要固化。
 
 ### 5.4 SEO 与渲染
 
@@ -792,33 +818,58 @@ public CompileResult Compile(IndustryTemplate tpl, string defaultLocale, IClock 
 
 - 每页 `<title>` / `meta description` / `canonical` / `og:*` / `twitter:card`；商品页输出 **JSON-LD `Product` + `Offer` + `BreadcrumbList`**，静态页输出 `Organization`。
 - **所有绝对 URL 由 `PublicSiteUrl` 生成，禁止读 `Host` 头**（见 §5.4.2）。
-- `sitemap.xml` 由 **API 动态生成**（多语种 + 每语种 URL + `hreflang` 互指；只放分类页、商品页、静态页，按语种分开输出）；`robots.txt` **只 Disallow 站内搜索与 `/api`**，**不 Disallow `/admin`、`/cart`、`/checkout`、`/account`**（它们允许抓取 + 页面级 `noindex` / `X-Robots-Tag`，理由见下方矩阵），**禁止出现任何通配参数模式**。
+- `sitemap.xml` 由 **API 动态生成**（多语种 + 每语种 URL + `hreflang` 互指；只放分类页、商品页、静态页，按语种分开输出）。
+- `robots.txt` **只有一条 `Disallow: /api`**，**不含任何前台路径**。这是**正确状态，不是配置遗漏**（见 AC-11 与需求台账 W15/W16）：`/admin`、`/cart`、`/checkout`、`/account`、站内搜索**全部允许抓取**，各自用页面级 `noindex` 或 `X-Robots-Tag` 表达"不收录"。**禁止出现任何通配参数模式**。QA 不得把"cart/checkout/search 没有 Disallow"记为缺陷。
 - 结构化 404/410（已下架商品 410 而非 404，帮助搜索引擎快速剔除）。
 - 图片：`srcset` + WebP + 固定宽高比（防 CLS）。
 - 分页页面 `rel=next/prev` 不输出（已失效标准），改为清晰的可抓取分页链接。
 
-**筛选 / 排序 / 分页 / 私有页的索引控制矩阵（v1.4 修订：**推翻 v1.3 的 `noindex` 方案**，以需求基线 v1.8 §6.1 为准）**
+**索引控制矩阵（两次推翻后的当前口径；判据见 AC-11 与 §6.1 S1~S11）**
 
-> **为什么推翻**：v1.3 写"筛选/排序组合 → `noindex, follow` + canonical 指无筛选分类页"。这个组合是**打架的**：`noindex` 与"外指 canonical"是两个互相冲突的信号，且 `noindex` 的代价是这类页面完全退出索引 —— 而它们本来靠 canonical 归并就能保住分类页的权重。正确做法是**只用 canonical 归并，不加 noindex、也不 Disallow**（Disallow 会让爬虫根本读不到 canonical，同样废掉归并）。
+> **推翻一（v1.4，我判断错的地方）**：v1.3 写"筛选/排序组合 → `noindex, follow` + canonical 指无筛选分类页"。这个组合是**打架的**：`noindex` 与"外指 canonical"是两个互相冲突的信号（`noindex` 优先生效、canonical 被忽略；多个被 noindex 的页同时外指同一目标，还可能反向拖累那个目标页的收录），且 `noindex` 的代价是这类页面完全退出索引 —— 而它们本来靠 canonical 归并就能保住分类页的权重。正确做法是**只用 canonical 归并，不加 noindex、也不 Disallow**（Disallow 会让爬虫根本读不到 canonical，同样废掉归并）。
 >
-> **判别口诀（这是唯一判据，不是"带不带参数"）**：**这条 URL 有没有"可归并的目标页"？** 有 → 允许抓取 + canonical 归并；没有 → Disallow。**带参数 ≠ 要 Disallow。**
+> **推翻二（v1.5，同一机制第 3 次被漏改）**：v1.4 把站内搜索判成"无归并目标 → Disallow"。错在把**同一机制只用在一半页面上**：`Disallow` 只挡抓取、不挡收录，被挡的 URL 若被外链指向，仍会以"无标题无描述裸链接"进结果，而那一刻爬虫读不到页面里的 `noindex`。站内搜索的正解是 `noindex, follow`。**于是 `robots.txt` 里再没有任何前台路径，只剩 `/api`。**
+>
+> **判别口诀（三步，这是唯一判据，不是"带不带参数"）**：
+> ① 该不该被收录？**不该**（私有页、站内搜索）→ `noindex, follow`，**且不输出 canonical**、**不 Disallow**；
+> ② 该收录的话有没有归并目标？**有**（带筛选/排序，**不论第几页**）→ canonical 指无参第 1 页；**没有**（分类页第 1 页、**不带筛选的**分页第 2 页起、商品详情）→ canonical 自引用；
+> **注意 ② 里"分页自引用"带限定词"不带筛选的"** —— 少了这三个字就会复发 W17/W18：带筛选的第 2 页自引用是错的（指向的是内容不同的页）。
+> ③ 要不要用 robots 挡？**不要**。`robots.txt` 只留 `/api`。
+> **带参数 ≠ 要 Disallow；`noindex` 与 canonical 不叠加 —— 每档只用一种信号。**
+>
+> **编号与需求 AC-11 严格同构（(a)/(b1)/(b1∩分页)/(b2)/(b3)/(c)）。** 我在 v1.4 用过自己的 b1~b6 编号（b2=分页、b4=搜索），与需求的 b2=站内搜索**撞号**，QA 交叉引用时会把两套编号当同一件事 —— 这类"编号漂移"和结论漂移一样致命，故废弃自编号。
 
-| 类别 | URL 形态 | canonical | robots.txt | meta robots |
-|---|---|---|---|---|
-| b1 分类页（含筛选/排序参数） | `/{locale}/c/tops?fit=slim&sort=price` | **不带任何参数的分类页** | 允许抓取 | **不加 noindex** |
-| b2 分类页分页（第 2 页起） | `/{locale}/c/tops?page=2` | **自引用**（归并到第 1 页会让第 2 页之后永不收录） | 允许抓取 | 不加 noindex |
-| b3 商品详情页 | `/{locale}/products/x?utm_source=...` | **自身，仅剔除 `utm_*`/`gclid` 等追踪参数** | 允许抓取 | 不加 noindex |
-| b4 站内搜索 | `/{locale}/search?q=` | 无归并目标 | **Disallow** | —（Disallow 优先，页面标签读不到） |
-| b5 私有页（购物车/结算/账户/订单查询） | `/{locale}/cart` 等 | — | **允许抓取** | **`noindex, follow`** |
-| b6 管理端 | `/admin/*` | — | **允许抓取** | **`X-Robots-Tag: noindex`**（响应头，覆盖非 HTML 资源，不必改 HTML） |
+| 档 | URL 形态 | canonical | robots.txt | 页面信号 | 需求断言 |
+|---|---|---|---|---|---|
+| **(a)** 私有页（购物车/结算/支付结果/账户/订单查询/安装向导/**主题预览**） | `/{locale}/cart` 等 + `/_preview/*` | — | **允许抓取** | **`noindex, follow`**（meta 或 `X-Robots-Tag`） | S1 + S2 |
+| **(b1)** 带筛选/排序参数的分类页 | `/{locale}/c/tops?fit=slim&sort=price` | **该分类页的无参数第 1 页** | 允许抓取（**绝不 Disallow**） | **不加 noindex** | S3 |
+| **(b1∩分页)** 带筛选/排序参数**且**分页 | `/{locale}/c/tops?fit=slim&page=2` | **仍是无参数第 1 页（不论第几页）** | 允许抓取 | 不加 noindex | S3 |
+| **(b2)** 站内搜索 | `/{locale}/search?q=` | **不输出 canonical** | 允许抓取（**绝不 Disallow**） | **`noindex, follow`** | S6 |
+| **(b3)** 商品详情（在售有货） | `/{locale}/products/x?utm_source=...` | **自引用**，仅剔除 `utm_*`/`gclid` | 允许抓取 | 不加 noindex | S5 |
+| **(b3-缺货)** 在售但库存 0 | `/{locale}/products/x` | **自引用**（与在售无异） | 允许抓取 | **200 + `availability=OutOfStock`，不得 404/410/noindex** | S10 |
+| **(b3-归档)** 已归档商品 | `/{locale}/products/x` | — | 允许抓取 | **有替代分类 → 301；无替代 → 410 Gone**（不是 404） | S9 |
+| **(c)** 管理端 | `/admin/*` | — | 允许抓取（**不得 Disallow**） | **可达 200** + **`X-Robots-Tag: noindex`**（Caddy 注入） | S11 |
 
-**三条禁令（写进 CI/评审，违反即回归）**
+> **(b3-缺货) 与 (b3-归档) 为什么必须分成两档（前端提出，我确认）**：它们不是一个判断。**归档 = 内容没了**（所以 301/410，且必须从 sitemap 移除）；**缺货 = 内容在、只是买不了**（所以 200 且**必须留在 sitemap**）。混成一行会丢掉 S10 的后半句"该 URL 仍在 `sitemap.xml` 中" —— 而那一半才是真正防错的：把缺货商品从 sitemap 摘掉是最常见的"看起来合理"的错，它会让断货期结束后的回榜变慢数周。
+>
+> **(c) 里"可达 200"这一条最容易被忽略**：为了"别收录 admin"而让它返回 403/404，S11 直接红。**挡收录只用 `X-Robots-Tag`，不动可达性** —— 与 (a) 档同一条道理。
+>
+> **(a) 档为什么包含主题预览 `_preview/*`，而不用 Disallow**：判据始终是"该不该被收录"，答案是不该 → `noindex, follow`。**"token 不可预测"不是 Disallow 的理由**：token 绑 Session + 30min TTL，URL 空间**随时间有界**，真正护住它的是 `no-store` + 不带 `Set-Cookie` + token 失效返 **404（不泄露存在性）**，这三条比 robots 有用得多；且预览页只从 admin iframe 打开、**无任何站内链接指向它**，不构成"无限空间"形态。
+>
+> **`(b1∩分页)` 为什么不是"第 2 页起自引用"（见 AC-11 的 (b1∩分页) 与需求台账 W18；我先前漏了这个交集）**：`?fit=slim&page=2` 是"筛选结果的第 25~48 个"，`?page=2` 是"全部商品的第 25~48 个"，**两组商品不同**，而 canonical 的语义是"同一内容"，指错会污染目标页；而"第 1 页归并、第 2 页自引用"会让父子指向不同族，给搜索引擎一组不自洽信号。**"第 2 页起自引用"只适用于不带任何筛选/排序参数的分页**。归并之所以不损失收录，前提是**筛选结果是主集合的子集** —— 所以筛选分页里的每个商品必然也出现在主分类页的某个分页中。
+>
+> **判据唯一载体是 `scripts/verify-seo-matrix.sh`，本节不再复制命令**（见 §6.1 与需求台账 W20）。同一份清单曾在五处文档各存一份，改一处必漏四处 —— 本轮 6 处过时表述全部由此产生。**脚本缺失、或未覆盖 S1~S11 任一条 → AC-11 判未通过，不得记"跳过"。**
 
-1. **`robots.txt` 禁止出现任何通配参数模式**（`Disallow: /*?*`、`/*?f.`、`/*&` 等）。它们会把 b1/b3 一起挡掉，而 b1/b3 恰恰依赖 canonical 被爬到。
-2. **任何 URL 不得同时命中 `Disallow` 与 `noindex`**，也不得同时命中 `Disallow` 与外指 canonical —— 前者是最差结果（既不收录也读不到指令），后者让归并彻底失效。
-3. **`FILTER_CANONICAL` 一类开关只允许作灰度/回滚用，默认值必须 ON**，发布验收必须以 ON 状态过需求 §6.1 的自检 5 问。开关默认关闭 = AC-11 不通过，不得记作"次要问题"。
+**六条禁令（写进 CI/评审，违反即回归）**
 
-**为什么 `/admin` 用 `X-Robots-Tag` 而不是 meta noindex**：① 不必改 HTML；② 覆盖非 HTML 资源（JSON/PDF/图片）；③ 对 HTML 两者等效 —— **不是因为 meta 无效**。这条写下来是防止后人"统一一下"改回 meta。
+1. **`robots.txt` 禁止出现任何通配参数模式**（`Disallow: /*?*`、`/*?f.`、`/*&` 等），也禁止出现任何前台路径。它们会把 (b1)/(b3) 一起挡掉，而这两档恰恰依赖 canonical 被爬到。`^Disallow:` 全量只允许 `/api` 一条（S7）。
+2. **同一 URL 不得双信号**：不得同时命中 `Disallow` 与 `noindex`、不得同时命中 `Disallow` 与**外指** canonical、不得同时输出 `noindex` 与**跨 URL 的** canonical（S8 的三条硬红）。前两种是最差结果（既不收录也读不到指令），后一种让归并彻底失效。
+3. **`noindex` 页上的"自指 canonical"是告警、不是红，更不得为过门禁去删它**（S8 明写）。模板统一输出 canonical 是正常实现，为让脚本变绿而删掉自指 canonical 属无意义改动，且会让页面失去自我描述。**闸门条件只能是"跨 URL"，不能是"有没有 canonical"** —— 这条要写进代码注释，否则后来人会顺手收紧成红。
+4. **`FILTER_CANONICAL` 一类开关只允许作灰度/回滚用，默认值必须 ON**，发布验收必须以 ON 状态过 §6.1 的 S1~S11。开关默认关闭 = AC-11 不通过，不得记作"次要问题"。
+5. **`(b2)` 站内搜索页绝不输出 canonical**。它是唯一"既 noindex 又必须无 canonical"的档位，最容易被"统一一下"改错。
+6. **挡收录不得动可达性**（S10/S11 的隐藏前提）：归档商品用 410 而不是"让它 404 消失"，缺货商品必须 200，`/admin` 必须 200。**"让页面打不开"是另一种形式的隐形收录失败** —— 它既没解决问题，又额外丢掉诊断信息。
+
+**为什么 `/admin` 用 `X-Robots-Tag` 而不是 meta noindex**：① admin 是纯静态产物、没有 Node 层可加响应头，只能由 Caddy 注入；② 覆盖非 HTML 资源（JSON/PDF/图片）；③ 对 HTML 两者等效 —— **不是因为 meta 无效**。这条写下来是防止后人"统一一下"改回 meta。
 
 ### 5.5 支付结算：三条路径、一段幂等逻辑
 
@@ -915,7 +966,13 @@ CanSell        = 支付凭据已填 && 最近一次连接测试通过 && 通道�
 CanSellReason  = ok | noCredentials | testFailed | channelDisabled     // 与 CanSell 同时落库
 ```
 
-**只给布尔值是错的**：商家看到"不能卖"却不知道为什么，等于把排障成本丢给客户。前台必须按 `reason` 区分文案与视觉层级 —— `noCredentials` → 中性提示"本站暂未开通在线支付"；`testFailed` / `channelDisabled` → **警示样式**"支付通道连接异常，请联系商家"（这是运维问题，不是"没开通"）。
+**只给布尔值是错的**：商家看到"不能卖"却不知道为什么，等于把排障成本丢给客户。前台必须按 `reason` 区分文案与视觉层级 —— `noCredentials` → 中性提示"本站暂未开通在线支付"；`testFailed` / `channelDisabled` → **警示样式**"支付通道连接异常，请联系商家"（这是运维问题，不是"没开通"）。`CanSell == false` 时**不渲染结算按钮**（不是渲染出来再报错）。
+
+> **️ 命名陷阱（前端提出，我确认，必须写进代码注释）：`CanSellReason` 与错误响应里的 `details.reason` 是两个不同的枚举，不要"统一风格"。**
+> - `CanSellReason` 是 **AC-17 原文的驼峰**：`ok` / `noCredentials` / `testFailed` / `channelDisabled` —— 它是**派生值**，落库、随设置读出来，用于渲染。
+> - 错误响应 `details.reason` 是 **UPPER_SNAKE**：`PAYMENT_NOT_CONFIGURED` / `PAYMENT_UNAVAILABLE` 等 —— 它是**瞬时错误码**，用于分支处理。
+>
+> **前端必须维护两张映射表，不做联合类型。** 把两者并成一个 `type` 是"看起来整洁、实际丢信息"的典型：它们回答的是不同问题（"现在为什么不能卖" vs "这一次请求为什么失败"），合并后无法区分"一直不可用"与"这次刚好失败"。**同理，本项目任何"看起来像同义词的枚举"都先问一句：它们是不是同一个事实的两个视角？**
 
 | 重算时机 | 触发 | 实现 |
 |---|---|---|
@@ -966,7 +1023,7 @@ CanSellReason  = ok | noCredentials | testFailed | channelDisabled     // 与 Ca
 | 11 | **属性筛选在 500 商品/分类下退化为全表扫** | 属性值窄表只有 `(ProductId)` 索引；或筛选组合超过 2 个属性 | 强制索引 `(AttributeId, OptionId, ProductId)` 与 `(CategoryId, Status, SortOrder)`；筛选只允许在 `filterable=true` 的维度上做且**默认最多 3 个维度同选**；**facet 计数不做实时交叉计算**（只显示"全部商品数"，点开某维度后才算该维度各选项计数）；用 10k/50k 种子库做基准，索引方案以 EXPLAIN QUERY PLAN 验收 |
 | 12 | **2GB 内存下三进程互相挤爆** | 压测正常但生产 OOM kill；或 Node SSR 在爬虫抓取高峰内存上涨 | 见 §6 内存预算行：GC 堆硬限 + Node `--max-old-space-size` + SQLite `cache_size` 固化；SSR 侧禁止全量预取（只取当前页所需）；部署脚本设置容器 mem_limit 让 OOM 发生在可控位置而非拖死整机 |
 | 13 | **翻译表膨胀 + 属性翻译 N+1 拖垮分类页** | 列表查询每次 join 翻译表；或误把管理端内部字段也建翻译；或属性名/选项名逐条查 | 列表按 `(EntityId, Locale)` 覆盖索引取值，只取 `Name/Slug` 不取 Description；内部字段不建翻译（§5.2.1）；**属性/选项翻译走批量端口 + 进程内缓存**（见 §5.2.5）；**集成测试断言"分类页首屏 SQL ≤ 8 条"**（唯一能防 N+1 回归的手段） |
-| 14 | **筛选组合 URL 被爬、Host 头污染 canonical** | US-E5-01 要求筛选状态进 URL 且"可被索引"；反向代理/容器下用 Host 头拼绝对 URL | 索引控制矩阵（§5.4.3，按需求 v1.8 §6.1）：**有可归并目标的 URL → 允许抓取 + canonical 归并（不加 noindex，不 Disallow）**；无归并目标的站内搜索 → Disallow；私有页 → 允许抓取 + `noindex`；`/admin` → `X-Robots-Tag`。**robots.txt 禁止任何通配参数模式**（会连归并页一起挡掉，canonical 读不到）。**绝对 URL 一律取 `PublicSiteUrl` 且优先级高于任何请求头**（Host 头注入 = 把索引权重转让给攻击者） |
+| 14 | **筛选组合 URL 被爬、Host 头污染 canonical** | US-E5-01 要求筛选状态进 URL 且"可被索引"；反向代理/容器下用 Host 头拼绝对 URL | 索引控制矩阵（§5.4.3，判据见需求 §6.1 S1~S11）：**该收录 + 有归并目标 → 允许抓取 + canonical 归并（不加 noindex、不 Disallow）**；**不该收录（私有页/站内搜索）→ 允许抓取 + `noindex,follow`，且不输出 canonical、不 Disallow**；`/admin` → `X-Robots-Tag`。**`robots.txt` 只留 `/api`，禁止任何通配参数模式**。**绝对 URL 一律取 `PublicSiteUrl` 且优先级高于任何请求头**（Host 头注入 = 把索引权重转让给攻击者） |
 
 ### 7.1 显式声明：留的扩展点 vs 明确不做
 
@@ -1026,10 +1083,10 @@ CanSellReason  = ok | noCredentials | testFailed | channelDisabled     // 与 Ca
 | 角色 | 从本文必须带走的东西 |
 |---|---|
 | **数据建模师** | §2.4 五个裁决（Order≠Payment、Cart 持久化、Variant 在 Product 内、Inventory 独立、**价格本期内联在 `ProductVariant`（`Currency` 必须本期落库）**，二期新增 `VariantPrice(VariantId, Currency)` 表 + 回填）；§5.2.3 翻译子表 + `(EntityId, Locale)` 与 `(Locale, Slug)` 双唯一索引，**只译终端可见字段**；§5.3.2 混合属性模型（定义/选项/窄值表 + scope/dataType/filterable）；`Money` = minor units + currency，订单/退款/报表全部带货币；`SetupState` 单行 + 状态机；Outbox（含 `DedupeKey` 唯一索引）；`WebhookEvent (Provider, DedupeKey)` 唯一键；`EmailTemplateOverride (TemplateKey, Locale)`；会话表（可撤销）；**性能索引三件套**：`(CategoryId, Status, SortOrder)`、`(AttributeId, OptionId, ProductId)`、翻译表 `(EntityId, Locale)` |
-| **后端工程师** | §1.1 依赖方向 + 架构测试规则；§3 选型（不引 MediatR/CQRS）；§5.3.2 `VariantMatrix` 与 `TemplateCompiler` 是**纯函数领域服务**；§5.3.3 向导状态码表（**页面 404 / 接口 409 `SetupAlreadyCompleted`（重置期间保持同一码）/ `Applying` 期间 409 `SetupInProgress`；503 只来自反代，不是应用契约**）；**§5.5 支付三路径共用 `PaymentSettlementService.SettleAsync`，幂等靠唯一索引而非 if 判断，`GatewayCapabilities` 声明能力而不是按通道 if，退款幂等键 = `Idempotency-Key: refund:{RefundId}`（通道无幂等键时先 `QueryRefund`），"需线下退款"= `Refund.Status.AwaitingManual` 且**对外投影为 `Processing`**，订单状态机不新增分支**；**`CanSell` + `CanSellReason`（`ok/noCredentials/testFailed/channelDisabled`）派生值必须落库，且结算确认与重新支付两个动作要再做一次 TOCTOU 校验**（admin 无翻转开关）；**§5.1.8 `IThemeCatalog` 必须原样透传主题 JSON（不得翻成 DTO，会丢 `x-*` 注解）**；**§5.2.5 翻译批量端口 + "分类页首屏 SQL ≤ 8 条"**；§2.4 一致性策略（本地事务 + 仅外部副作用走 Outbox）；§6 安全清单（越权在服务层强制、绝对 URL 不读 Host 头）+ 内存预算（GC 硬限、禁止无分页查询） |
-| **前端工程师** | §5.4 storefront = SvelteKit SSR、admin = `ssr=false`；§4.2 **`routes/[locale]/` 必填，不是 `[[locale]]`；单语种也不做退化分支**；§5.1.3 `import.meta.glob` 注册表（**路径 5 个 `../`**）+ 主题必须 SSR-safe + 5s 生效缓存；§5.1.2 **`tokens.schema.json` 单文件（默认值 + 白名单 + `x-control`/`x-group`/`x-a11y`）+ `blocks.schema.json`** 是编辑面板唯一真源；§5.1.7 **`<svelte:boundary>` 兜不住 SSR，三层防线**；§5.1.8 admin 零 glob、预览走 iframe；§5.1.4 token 三层合并 + CSS 变量注入；**§5.2.2 所有语种一律 `/{locale}/` 前缀（含默认），`/` 302，缺前缀 302，slug 变更才 301**；§5.4.3 **索引控制矩阵：b1 筛选/排序/分页**允许抓取 + canonical 归并（筛选排序归并到无参分类页、分页自引用）、**不加 noindex 不 Disallow**；b3 商品页只剔 `utm_*`；b4 站内搜索 Disallow；b5 私有页允许抓取 + `noindex`；b6 `/admin` 用 `X-Robots-Tag`；**robots.txt 禁通配参数**；§5.4.2 **降级页必须 503 + `Retry-After` + `no-store`，绝不返回 200 空壳；绝对 URL 取 `PublicSiteUrl` 不读 Host 头**；§4.3 共享边界（**storefront 的 DTO 不得含成本价/库存内情**）；筛选切换走客户端 `load` 局部取数（800ms 指标靠这个） |
-| **DevOps** | §1.2 三进程一数据卷；API 仅内网；`/data/media` 与 DB 在同一备份策略内；`check.sh` 进 CI；`/health/*` 探针；备份 RPO 24h/RTO 1h + 恢复演练；**§6 内存预算必须落到容器 mem_limit 与 `PRAGMA`/Node 参数上**（2GB 机器三进程是硬约束）；**§5.3.3 向导重置逃生口 `OPENSTORE_ALLOW_SETUP_RESET` 默认关闭，重置完成前安装写接口保持 409 `SetupAlreadyCompleted`（503 只可能来自反代，不是应用契约）** |
-| **QA** | §6 性能与并发基线（10k/50k 种子库压测、断言"无超卖"、Lighthouse LCP ≤ 2.5s、筛选 ≤ 800ms、分类页首屏 SQL ≤ 8）；**§5.5 重放同一成功回调 5 次 → 支付记录 1、库存只扣 1、邮件只发 1（串行 + 并发都要测）**；§5.5 退款重试 3 次只产生 1 笔 + 线下退款降级后订单/报表口径与线上一致；§5.3.3 向导中断/重跑 + **`/setup` 页 404、写接口 409 `SetupAlreadyCompleted`、`Applying` 期间 409 `SetupInProgress` 分别断言**；§5.2.2 缺语言前缀必须 302（`/products/x` → `/zh/products/x`），`/` 302 到 `/{default}/`，**两语种页面互不重定向**，slug 变更才是 301；§5.4.3 **索引控制矩阵逐格验**（尤其：b1 不得出现 `noindex`、`robots.txt` 不得出现任何通配参数、分页 canonical 自引用、任何 URL 不得同时命中 Disallow 与 noindex）；§5.5 **`CanSellReason` 四值分别验文案 + 结算确认时改坏凭据必须被服务端拦住（TOCTOU）**；§5.4.2 **断开后端必须返回 503 而非 200 空页**；§5.2.4 缺翻译兜底与双向 hreflang；§7 风险表触发条件即回归重点；Playwright 黄金链路 + axe 可访问性 |
+| **后端工程师** | §1.1 依赖方向 + 架构测试规则；§3 选型（不引 MediatR/CQRS）；§5.3.2 `VariantMatrix` 与 `TemplateCompiler` 是**纯函数领域服务**；§5.3.3 向导状态码表（**四档：`Draft/Failed` 200 / `Applying` 409 `SetupInProgress` / `Completed` 页面 404 + 写接口 409 `SetupAlreadyCompleted` / 重置进行中 503 + `Retry-After` + `SetupResetting`**）；**§5.5 支付三路径共用 `PaymentSettlementService.SettleAsync`，幂等靠唯一索引而非 if 判断，`GatewayCapabilities` 声明能力而不是按通道 if，退款幂等键 = `Idempotency-Key: refund:{RefundId}`（通道无幂等键时先 `QueryRefund`），"需线下退款"= `Refund.Status.AwaitingManual` 且**对外投影为 `Processing`**，订单状态机不新增分支**；**`CanSell` + `CanSellReason`（`ok/noCredentials/testFailed/channelDisabled`）派生值必须落库，且结算确认与重新支付两个动作要再做一次 TOCTOU 校验**（admin 无翻转开关）；**§5.1.8 `IThemeCatalog` 必须原样透传主题 JSON（不得翻成 DTO，会丢 `x-*` 注解）**；**§5.2.5 翻译批量端口 + "分类页首屏 SQL ≤ 8 条"**；§2.4 一致性策略（本地事务 + 仅外部副作用走 Outbox）；§6 安全清单（越权在服务层强制、绝对 URL 不读 Host 头）+ 内存预算（GC 硬限、禁止无分页查询） |
+| **前端工程师** | §5.4 storefront = SvelteKit SSR、admin = `ssr=false`；§4.2 **`routes/[locale]/` 必填，不是 `[[locale]]`；单语种也不做退化分支**；§5.1.3 `import.meta.glob` 注册表（**路径 5 个 `../`**）+ 主题必须 SSR-safe + 5s 生效缓存；§5.1.2 **`tokens.schema.json` 单文件（默认值 + 白名单 + `x-control`/`x-group`/`x-a11y`）+ `blocks.schema.json`** 是编辑面板唯一真源；§5.1.7 **`<svelte:boundary>` 兜不住 SSR，三层防线**；§5.1.8 admin 零 glob、预览走 iframe；§5.1.4 token 三层合并 + CSS 变量注入；**§5.2.2 所有语种一律 `/{locale}/` 前缀（含默认），`/` 302，缺前缀 302，slug 变更才 301**；§5.4.3 **索引控制矩阵 (a)/(b1)/(b1∩分页)/(b2)/(b3)/(b3-缺货)/(b3-归档)/(c)，每档只用一种信号（判据 S1~S11）**：私有页与站内搜索 → `noindex,follow` 且**不输出 canonical**；筛选/排序（含带筛选的分页，不论第几页）→ canonical 指无参第 1 页、**不加 noindex 不 Disallow**；不带筛选的分页第 2 页起 → canonical 自引用；商品页只剔 `utm_*` 自引用；**缺货商品必须 200 且留在 sitemap**；**归档商品有替代分类 301、无替代 410**；`/admin` **必须可达 200** + `X-Robots-Tag`；**`robots.txt` 只有 `/api` 一条，禁通配参数**；`noindex` 页上的**自指** canonical 是告警不是红、不得为过门禁删除；**`CanSellReason`（驼峰）与 `details.reason`（UPPER_SNAKE）是两张映射表，不得合并**；§5.4.2 **降级页必须 503 + `Retry-After` + `no-store`，绝不返回 200 空壳；绝对 URL 取 `PublicSiteUrl` 不读 Host 头**；§4.3 共享边界（**storefront 的 DTO 不得含成本价/库存内情**）；筛选切换走客户端 `load` 局部取数（800ms 指标靠这个） |
+| **DevOps** | §1.2 三进程一数据卷；API 仅内网；`/data/media` 与 DB 在同一备份策略内；`check.sh` 进 CI；`/health/*` 探针；备份 RPO 24h/RTO 1h + 恢复演练；**§6 内存预算必须落到容器 mem_limit 与 `PRAGMA`/Node 参数上**（2GB 机器三进程是硬约束）；**§5.3.3 向导重置逃生口 `OPENSTORE_ALLOW_SETUP_RESET` 默认关闭；四档状态码 `Applying`→409 `SetupInProgress`、`Completed`→409 `SetupAlreadyCompleted`、重置进行中→503 + `Retry-After` + `SetupResetting`（反代不得改写该状态码）** |
+| **QA** | §6 性能与并发基线（10k/50k 种子库压测、断言"无超卖"、Lighthouse LCP ≤ 2.5s、筛选 ≤ 800ms、分类页首屏 SQL ≤ 8）；**§5.5 重放同一成功回调 5 次 → 支付记录 1、库存只扣 1、邮件只发 1（串行 + 并发都要测）**；§5.5 退款重试 3 次只产生 1 笔 + 线下退款降级后订单/报表口径与线上一致；§5.3.3 向导中断/重跑 + **四档状态码分别断言（`Draft/Failed` 200、`Applying` 409 `SetupInProgress`、`/setup` 页 404 + 写接口 409 `SetupAlreadyCompleted`、重置进行中 503 + `Retry-After` + `SetupResetting`；不得用 409 冒充"正在重置"）**；§5.2.2 缺语言前缀必须 302（`/products/x` → `/zh/products/x`），`/` 302 到 `/{default}/`，**两语种页面互不重定向**，slug 变更才是 301；§5.4.3 **索引矩阵以需求 §6.1 的 S1~S11 为准、机器判据只看 `scripts/verify-seo-matrix.sh`**（尤其：筛选页不得出现 `noindex`、`robots.txt` 的 `Disallow` 只有 `/api`、**带筛选的分页不论第几页都归并到无参第 1 页**、**不带筛选的分页第 2 页起自引用**、站内搜索 `noindex` 且不输出 canonical、**缺货商品 200 且仍在 sitemap**、**归档商品有替代 301 / 无替代 410**、**`/admin` 可达 200**、任一 URL 不得双信号；脚本缺失或未覆盖任一 S 条即判 AC-11 未通过，**不得记"跳过"**）；§5.5 **`CanSellReason` 四值分别验文案 + 结算确认时改坏凭据必须被服务端拦住（TOCTOU）**；§5.4.2 **断开后端必须返回 503 而非 200 空页**；§5.2.4 缺翻译兜底与双向 hreflang；§7 风险表触发条件即回归重点；Playwright 黄金链路 + axe 可访问性 |
 
 ---
 
@@ -1037,7 +1094,7 @@ CanSellReason  = ok | noCredentials | testFailed | channelDisabled     // 与 Ca
 
 ---
 
-## 附录 B. 变更记录（v1.0 → v1.4）
+## 附录 B. 变更记录（v1.0 → v1.6）
 
 ### B.1 v1.1（对齐需求 6 条硬约束）
 
@@ -1047,7 +1104,7 @@ CanSellReason  = ok | noCredentials | testFailed | channelDisabled     // 与 Ca
 |---|---|---|---|
 | 1 | AC-10：商城端必须服务端渲染完整可索引 HTML | **成立，无需修订**（v1.0 已选 SvelteKit SSR）。补充"主题 + SSR 同时成立的三个充要条件"，并把 `curl` 断言写进 QA 清单 | §5.1.3、§5.4 |
 | 2 | 主题包是 MVP 对外契约（白名单可编辑项、≤5s 生效、带版本兼容规则） | **补充**：manifest 增加 `formatVersion` / `supports` / 可编辑 schema，并写明向前兼容承诺；补充 5s 生效的缓存与失效策略 | §5.1.2、§5.1.3 |
-| 3 | 裁决 1：多语种实体+语言形态；URL 前缀策略 | **修订两次，最终以需求基线 v1.1 变更 #2 为准**：**所有语种一律 `/{locale}/` 前缀（含默认）**，根路径 302，缺前缀 302，slug 变更 301，canonical 指自身，hreflang 双向 + x-default。同时补充"属性名与选项名可译""邮件模板可译""只译终端可见字段" | §0、§5.2.1、§5.2.2 |
+| 3 | 裁决 1：多语种实体+语言形态；URL 前缀策略 | **修订两次，最终以 AC-11 为准**：**所有语种一律 `/{locale}/` 前缀（含默认）**，根路径 302，缺前缀 302，slug 变更 301，canonical 指自身，hreflang 双向 + x-default。同时补充"属性名与选项名可译""邮件模板可译""只译终端可见字段" | §0、§5.2.1、§5.2.2 |
 | 4 | 裁决 2/4：变体 ≤3 维；价格结构"变体 × 币种"，订单/退款/报表带货币代码 | ~~价格从 Variant 列改为 `VariantPrice(VariantId, Currency)` 子表~~ **⚠️ 已被主理人复裁推翻（见 B.5 W13）**：本期内联在 `ProductVariant`（`Currency` 必须落库），二期新增 `VariantPrice` 表 + 回填 | §2.4、§0、附录 A |
 | 5 | US-E6-03 / AC-07：回调可能收不到，需轮询对账兜底，三路径共用幂等 | **新增**：§5.5 支付结算三路径 + `PaymentSettlementService` 唯一入口 + 三道唯一索引幂等 + `GatewayCapabilities` 能力声明（退款可缺省） | §5.5、§0 |
 | 6 | AC-12：10k 商品 / 50k 变体 / 500 每分类 / 2C2G / SQLite | **修订**：性能与容量基线从"假设 5k SKU"上调为需求值；新增 **2GB 内存预算** 与索引三件套；新增风险 11-13 | §6、§7、附录 A |
@@ -1071,41 +1128,63 @@ CanSellReason  = ok | noCredentials | testFailed | channelDisabled     // 与 Ca
 | 7 | PM canSell | `canSell` 若做成可手改布尔 → 商家会开出"收不到钱的僵尸订单"，比演示模式不能下单糟得多 | 定为**派生值并落库**：`凭据已填 && 最近连接测试通过 && 通道启用`；支付配置变更时同事务重算 + **复用 2 分钟对账 Job** 定时重算；admin 不提供翻转开关 | §5.5、§2.2 |
 | 8 | PM 问题 ① | 退款重试幂等键未定，AC-19 写不下去 | **用我方 `Refund.Id`**（`Idempotency-Key` 传给通道）+ 唯一约束 `(ReturnRequestId)` + 回执按 `(Gateway, GatewayRefundId)` 落地。否决"订单行+金额+时间窗"（会误判部分退款、会漏判超窗重试） | §5.5 |
 | 9 | PM 问题 ② | 筛选组合 URL 数量爆炸（6 属性 × 5 值 = 15,625），爬虫抓取预算被吃光 | ~~三档归并：筛选/排序组合 `noindex,follow` + canonical 指无筛选分类页~~ **⚠️ 已被 B.4 #1 推翻**（`noindex` + 外指 canonical 是冲突信号）：现为**只做 canonical 归并、不加 noindex、不 Disallow** | §5.4.3 |
-| 10 | PM 问题 ③ | 向导逃生口重置期间返回 409 还是 503 未定 | ~~重置进行中 → 503~~ **⚠️ 已被 B.4 #3 推翻**：重置完成前保持 **409 `SetupAlreadyCompleted`**，503 只来自反代、不算应用契约 | §5.3.3 |
+| 10 | PM 问题 ③ | 向导逃生口重置期间返回 409 还是 503 未定 | 已定稿（见 AC-01 与需求台账 W22/W23）：**重置进行中 → 503 + `Retry-After` + `SetupResetting`**，重置完成回落 409 `SetupAlreadyCompleted`。~~曾被 B.4 #3 推翻为 409~~ **该推翻本身已作废（A-W18）** —— 判定依据是"谁在制造这个事实"，不是"这个码通常归谁" | §5.3.3 |
 | 11 | PM 问题 ④ | "需线下退款"是退款单状态还是订单状态 | **退款单状态**（订单状态机不新增分支，此结论成立）；但 **`ManualPending/ManualCompleted` 命名已被 B.4 #2 推翻** → 现为单个 **`AwaitingManual`** 且**对外投影为 `Processing`** | §5.5 |
 | 12 | PM 需求事实 | 属性名与选项名必须可译 → 分类页 24 商品 × 5 属性 = 120+ 次翻译查询，SSR 必炸 500ms | 新增 §5.2.5：批量端口 `GetManyAsync` 禁止 per-entity；属性/选项翻译进进程内缓存；商品列表只取 `Name/Slug` 不取 Description；**集成测试断言"分类页首屏 SQL ≤ 8 条"** | §5.2.5、§7 风险 13 |
 
-### B.4 v1.4（对齐需求基线 v1.8）
+### B.4 我判断错在哪（跨多轮累积，按需求台账编号引用）
 
-需求文档在 v1.5~v1.8 又推进了 18 条变更，其中 **3 条直接推翻了我 v1.3 的判断**。这一节记录下来，是因为"我做错过的判断"比"我做对的判断"对后人更有用。
+需求文档在 v1.5~v1.10 又推进了 29 条变更，其中 **8 条直接推翻或部分推翻了我 v1.3~v1.5 的判断**。这一节记录下来，是因为"我做错过的判断"比"我做对的判断"对后人更有用 —— 做对的结论没有上下文，做错的结论有"为什么当时会这么想"。
+
+> **本回合最深的一条教训（写在最前面，因为它比任何单条结论都值钱）**：索引控制这一类，**全组共踩了 6 次**（需求侧 2 次、我 2 次、team-lead 1 次、前端 1 次），而每次犯的是**同一个错**：把"不该收录"读成"不该抓取"。这不是理解力问题，是**表述结构问题** —— 只要写成"结论表"（`b1 → Disallow`），下一个人就会照抄；只要写成"依据 + 判别步骤"（`Disallow` 只表达"别抓"，从不表达"别收录"），才不会复发。**所以本轮所有索引相关表述都改成了"带原因的判别式"。**
 
 | # | 需求条目 | 我 v1.3 写的 | 为什么是我错 | 现在 |
 |---|---|---|---|---|
-| 1 | v1.6 #28 筛选页 canonical 归并 | 筛选/排序组合 → `noindex, follow` + canonical 指无筛选分类页 | **`noindex` 与"外指 canonical"是冲突信号**：`noindex` 让页面退出索引，归并就失去意义；而换成 Disallow 又会让爬虫读不到 canonical —— 两条路都是死路。正确做法是**只用 canonical 归并，既不加 noindex 也不 Disallow** | §5.4.3 索引控制矩阵（b1~b6），并加三条禁令：robots.txt 禁通配参数、任何 URL 不得同时命中 Disallow 与 noindex、`FILTER_CANONICAL` 默认必须 ON |
+| 1 | v1.6 #28 筛选页 canonical 归并 | 筛选/排序组合 → `noindex, follow` + canonical 指无筛选分类页 | **`noindex` 与"外指 canonical"是冲突信号**：`noindex` 让页面退出索引，归并就失去意义；而换成 Disallow 又会让爬虫读不到 canonical —— 两条路都是死路。正确做法是**只用 canonical 归并，既不加 noindex 也不 Disallow** | §5.4.3 索引控制矩阵 (a)/(b1)/(b1∩分页)/(b2)/(b3)/(b3-缺货)/(b3-归档)/(c)，并加六条禁令：robots.txt 只留 `/api` 且禁通配参数、同一 URL 不得双信号、`noindex` 页自指 canonical 是告警不是红且不得删除、`FILTER_CANONICAL` 默认必须 ON、`(b2)` 绝不输出 canonical、**挡收录不得动可达性** |
 | 2 | v1.6 #30 线下退款状态命名 | `Refund.Status: ManualPending → ManualCompleted` | ① 命名与该状态的真实语义不符（它不是一个"待处理→已完成"的两段流程，而是"等人工处理"这一个状态）；② **更严重的是我漏了"对外投影"这一层** —— 买家看到"线下退款"只会怀疑"是不是没人管我" | 内部 **`AwaitingManual`**（`Provider = manual`、`ProviderRefundId` = 凭证号）；**对外一律投影为 `Processing`**；运营端才看得到线下标记 |
-| 3 | v1.6 #29 向导锁定状态码 | 重置进行中 → **503 + `Retry-After`**；接口 404（路由不注册） | ① 我把"基础设施不可用"和"应用层拒绝"混了；② 更要紧的是：需求要**稳定错误码 `SetupAlreadyCompleted`**，而"路由不注册"只能给泛化 404，**带不了错误码** → 前端与运维脚本无法区分"已完成"与"权限不足" | §5.3.3 + §5.3.5 重写：**页面 404 / 接口 409**（`Applying` → 409 `SetupInProgress`；`Completed` 与"重置期间"都是 409 `SetupAlreadyCompleted`）；写路由**照常注册**但被 `SetupLockFilter` 拦截；503 只可能来自反代 |
+| 3 | v1.6 #29 向导锁定状态码 | 重置进行中 → **503 + `Retry-After`**；接口 404（路由不注册） | **这一条我只对了一半，且后来把对的那半也改错了，须分两段记**：<br>**（对的一半）接口 404 → 409**：需求要**稳定错误码 `SetupAlreadyCompleted`**，而"路由不注册"只能给泛化 404、**带不了错误码**，前端与运维脚本无法区分"已完成"与"权限不足"。这个纠正成立。<br>**（错的一半）503 → 409**：我把"503 = 基础设施信号"当成了绝对命题。**应用自己主动重建数据库时，它就是在拒绝服务**，503 是应用自己的语义，不是反代的。真正的错因是：我用"这个码通常归谁"代替了"谁在制造这个事实" | §5.3.3 + §5.3.5 重写：**页面 404 / 接口 409 `SetupAlreadyCompleted`（未开逃生口）/ 503 + `Retry-After` + `SetupResetting`（重置进行中）**；`Applying` → 409 `SetupInProgress`；写路由**照常注册**但被 `SetupLockFilter` 拦截。**这一格共改错两次（v1.3 对 → v1.4 错 → v1.10 回到 v1.3），见 B.5 W9/W18** |
+| 1b | 需求台账 W15（站内搜索索引控制） | 站内搜索 → `robots Disallow`（"无归并目标就用 Disallow"） | **同一个机制我只用在一半页面上**：前面刚论证过"Disallow 只挡抓取不挡收录"，转手就把搜索页判成 Disallow，理由是"它没有归并目标"—— 但"没有归并目标"决定的只是**要不要输出 canonical**，不是**要不要 Disallow**。两个判断被我合成了一个 | §5.4.3：站内搜索 → 允许抓取 + `noindex,follow` + **不输出 canonical**；`robots.txt` 只剩 `/api`。见 W15/W16 |
 | 4 | v1.5 #25 `canSellReason` | 只有 `CanSell: bool` | 布尔值丢掉了"为什么不能卖"，把排障成本转嫁给了商家 | `CanSell` + **`CanSellReason` 四值**（`ok/noCredentials/testFailed/channelDisabled`），前台按 reason 区分中性提示与警示样式 |
 | 5 | v1.5 #26 TOCTOU | 只在渲染页面时判 `CanSell` | "页面可结算 → 凭据被改坏 → 提交"这个窗口里，前端禁用只是摆设 | **结算确认 + 重新支付两个动作在服务端各再校验一次**，失败返回 `PaymentUnavailable` + reason |
 | 6 | v1.6 #27 退款幂等键格式 | `Idempotency-Key = Refund.Id` | 裸 ID 会与通道上 `payment:{id}` 的 key 空间混在一起 | **`Idempotency-Key: refund:{RefundId}`**；**通道不支持幂等键时重试前必须先 `QueryRefund` 查状态**（不能靠"重试应该没事"）；落库兜底 `(Provider, ProviderRefundId)` |
-| 7 | v1.7 #32/#36 可执行判据 | 只写原则，没给可跑的检查 | 原则会被读成不同意思（同一结论在需求侧复发了 3 次） | 直接引用需求 §6.1 的自检 5 问作为发布验收门槛 |
+| 7 | v1.7 #32/#36、v1.10 #48 可执行判据 | 只写原则，没给可跑的检查 | 原则会被读成不同意思（同一结论在需求侧复发了 3 次） | **判据收敛到单点**：需求 §6.1 的 **S1~S11 语义断言**，唯一机器载体是 `scripts/verify-seo-matrix.sh`；本文不再复制命令清单（复制一次就多一处漂移源）。脚本缺失或漏覆盖任一 S 条 → AC-11 判未通过 |
+
+### B.4b v1.5~v1.6 改动清单（非推翻类，便于下游增量对照）
+
+| 位置 | 改动 | 为什么现在必须改 |
+|---|---|---|
+| §4.2 路由树 | 新增 `routes/[...rest]/+server.ts` **缺前缀兜底**（302，保留 query）+ 三条实现约束 + **未启用语种 → 404 不做 302** | 原文档只有 `[locale]` 必填，没有兜底路由。AC-11 规则 3 要求"**任意**前台路径缺前缀 302"，光有必填参数只兑现了根路径那一种情况（前端 D-新 提出） |
+| §5.3.3 | 向导状态码改为**四档**（含重置进行中 503 `SetupResetting`）；三层锁定里的端点层同步分档 | 见 AC-01 / 需求台账 W22·W23；且 409/503 混用会让运维误诊 |
+| §5.4.3 | 矩阵重排为与需求同构的 **(a)/(b1)/(b1∩分页)/(b2)/(b3)/(b3-缺货)/(b3-归档)/(c)**，挂 **S1~S11** 编号；禁令 3 → 6 条；判据统一指向 `scripts/verify-seo-matrix.sh` | ① 需求新增 (b1∩分页) 交集规则；② 我曾自编号 b1~b6 与需求撞号（我的 b2=分页、需求的 b2=搜索），会误导 QA 交叉引用 |
+| 文件头 | 采纳需求侧两条写法规则：**物理分区**（正文只放有效结论）+ **引用不复制**（判据只写"见 AC-xx / Sn"） | 本轮 6 处过时表述**全部**由"复制一份到下游"产生，不是理解错误 |
+| 附录 A | 交接表同步上述各处，QA 行改为"以 S1~S11 + 单脚本为准" | 交接表是下游实际会照着做的那一页，最不能滞后 |
 
 ### B.5 已作废结论台账（架构侧）
 
 > 只记"我曾经写过、现在不成立"的句子。写清**作废了哪一版的哪一句**，避免后人翻到旧段落以为是现行结论。
+>
+> **编号命名空间（重要）**：本表用 **`A-Wn`** 前缀，与需求基线的 `Wn` **是两个独立命名空间**。引用本表写 `A-Wn`，引用需求台账写"需求台账 Wn"。**两个命名空间不得互相替代、也不得复用编号** —— 否则"见 W18"会有两种解释，而这正是本轮反复吃亏的形态（读者必须判断"这是哪套编号"，等于给引用加了一个隐式缓存键）。
 
 | # | 已作废的原文 | 出自 | 现结论 |
 |---|---|---|---|
-| W1 | "默认语种无前缀、其余语种带 `/{locale}/` 前缀" | v1.1 §0 / §5.2.2 | **所有语种一律带前缀（含默认）**；纯文本状态以需求基线为准 |
-| W2 | "`/{defaultLocale}/xxx` → 301 到 `/xxx`" | v1.1 §5.2.2 | 删除。全前缀下此规则多余，且会误导实现者去兼容无前缀形态 |
-| W3 | "`routes/[[locale]]/`（可选参数）" | v1.0~v1.2 §4.2 | **`routes/[locale]/`（必填）**；单语种也不做退化分支 |
-| W4 | "import.meta.glob `'../../../../themes/*/index.ts'`" | v1.0~v1.2 §5.1.3 | **5 个 `../`**（少一层会解析到不存在的 `apps/themes`，构建期直接报错） |
-| W5 | "`tokens.json` + `editable.schema.json` 双文件" | v1.1~v1.2 §5.1.2 | 合并为单一 **`tokens.schema.json`**（默认值与白名单同源，防漂移） |
-| W6 | "主题组件抛错 → 错误边界渲染降级布局" | v1.0~v1.2 §5.1.6 | **`<svelte:boundary>` 兜不住 SSR**。改为三层防线（构建期冒烟 / SSR 熔断 / 客户端区块级） |
-| W7 | "筛选/排序组合 → `noindex, follow`" | v1.3 §5.4.3 | **不加 noindex、不 Disallow，只做 canonical 归并**（见 B.4 #1） |
-| W8 | "分页 canonical 指向第 1 页" | v1.3 曾短暂如此 | **分页自引用**，否则第 2 页之后永不收录 |
-| W9 | "重置进行中 → 503 + `Retry-After`" | v1.3 §5.3.3 | **409 `SetupAlreadyCompleted` 保持到重置完成**；503 只来自反代，不是应用契约 |
-| W10 | "`Refund.Status: ManualPending / ManualCompleted`" | v1.3 §5.5 | **`AwaitingManual`** 单状态 + **对外投影 `Processing`** |
-| W11 | "`robots.txt` 屏蔽 `/admin`、`/cart`、`/checkout`、`/account`" | v1.0~v1.3 §5.4.3 | **允许抓取 + 页面级 `noindex`**；`/admin` 用 `X-Robots-Tag`。Disallow 会让页面读不到 noindex，得到最差结果 |
-| W12 | "`import.meta.glob` 由 admin 也读主题" | 隐含在 v1.0 schema-driven 编辑里 | **admin 零 glob**，走 `/api/admin/themes` 原样透传 JSON |
-| W13 | "价格是 `VariantPrice(VariantId, Currency)` 子表，不在 Variant 列上" | v1.1~v1.3 §2.4 / §0 | **本期内联在 `ProductVariant`**（`AmountMinor`/`CompareAtMinor`/`Currency`），`Currency` 必须本期落库；二期**新增** `VariantPrice` 表 + 回填 + 双读切换。**主理人复裁**：1:1 子表要给热路径价格读取付**永久** join 成本，而"二期新增表"是纯增量、可在线、可回退；"只插行"只在 PK 已是复合键时成立，我原先的推法依赖数据侧尚未落地这一前提 |
-| W14 | "已完成时安装写路由不注册 → 404 收敛攻击面" | v1.0~v1.3 §5.3.5 第 3 层 | **写路由照常注册，由 `SetupLockFilter` 统一返回 409 `SetupAlreadyCompleted`**；只有 `/setup` 页面是 404。理由：稳定错误码的价值 > 收敛 URL 攻击面的价值（安装接口 URL 本不是秘密） |
+| A-W1 | "默认语种无前缀、其余语种带 `/{locale}/` 前缀" | v1.1 §0 / §5.2.2 | **所有语种一律带前缀（含默认）**；见 AC-11 |
+| A-W2 | "`/{defaultLocale}/xxx` → 301 到 `/xxx`" | v1.1 §5.2.2 | 删除。全前缀下此规则多余，且会误导实现者去兼容无前缀形态 |
+| A-W3 | "`routes/[[locale]]/`（可选参数）" | v1.0~v1.2 §4.2 | **`routes/[locale]/`（必填）**；单语种也不做退化分支 |
+| A-W4 | "import.meta.glob `'../../../../themes/*/index.ts'`" | v1.0~v1.2 §5.1.3 | **5 个 `../`**（少一层会解析到不存在的 `apps/themes`，构建期直接报错） |
+| A-W5 | "`tokens.json` + `editable.schema.json` 双文件" | v1.1~v1.2 §5.1.2 | 合并为单一 **`tokens.schema.json`**（默认值与白名单同源，防漂移） |
+| A-W6 | "主题组件抛错 → 错误边界渲染降级布局" | v1.0~v1.2 §5.1.6 | **`<svelte:boundary>` 兜不住 SSR**。改为三层防线（构建期冒烟 / SSR 熔断 / 客户端区块级） |
+| A-W7 | "筛选/排序组合 → `noindex, follow`" | v1.3 §5.4.3 | **不加 noindex、不 Disallow，只做 canonical 归并**（见 B.4 #1）。需求台账把同一条记为 W17 |
+| A-W8 | "分页 canonical 指向第 1 页" | v1.3 曾短暂如此 | **不带筛选/排序参数的分页第 2 页起自引用**；**带筛选的一律归并到无参第 1 页**（见 A-W17）。原句"分页自引用"缺限定词，是 A-W17 复发的原因 |
+| A-W9 | "重置进行中 → 503 + `Retry-After`" | v1.3 §5.3.3 | **⚠️ 本条作废本身已被作废（见 A-W18）**：v1.3 原文是对的，后来我改成 409 是错的。**现结论：重置进行中 = 503 + `Retry-After` + `SetupResetting`，`Completed` 未开逃生口 = 409 `SetupAlreadyCompleted`**（需求台账 W22） |
+| A-W10 | "`Refund.Status: ManualPending / ManualCompleted`" | v1.3 §5.5 | **`AwaitingManual`** 单状态 + **对外投影 `Processing`** |
+| A-W11 | "`robots.txt` 屏蔽 `/admin`、`/cart`、`/checkout`、`/account`" | v1.0~v1.3 §5.4.3 | **允许抓取 + 页面级 `noindex`**；`/admin` 用 `X-Robots-Tag`。Disallow 会让页面读不到 noindex，得到最差结果 |
+| A-W12 | "`import.meta.glob` 由 admin 也读主题" | 隐含在 v1.0 schema-driven 编辑里 | **admin 零 glob**，走 `/api/admin/themes` 原样透传 JSON |
+| A-W13 | "价格是 `VariantPrice(VariantId, Currency)` 子表，不在 Variant 列上" | v1.1~v1.3 §2.4 / §0 | **本期内联在 `ProductVariant`**（`AmountMinor`/`CompareAtMinor`/`Currency`），`Currency` 必须本期落库；二期**新增** `VariantPrice` 表 + 回填 + 双读切换。**主理人复裁**：1:1 子表要给热路径价格读取付**永久** join 成本，而"二期新增表"是纯增量、可在线、可回退；"只插行"只在 PK 已是复合键时成立，我原先的推法依赖数据侧尚未落地这一前提 |
+| A-W14 | "已完成时安装写路由不注册 → 404 收敛攻击面" | v1.0~v1.3 §5.3.5 第 3 层 | **写路由照常注册，由 `SetupLockFilter` 统一返回 409 `SetupAlreadyCompleted`**；只有 `/setup` 页面是 404。理由：稳定错误码的价值 > 收敛 URL 攻击面的价值（安装接口 URL 本不是秘密）。需求台账把同一句记为 W24 |
+| A-W15 | "站内搜索用 `robots Disallow` 挡，因为无归并目标" | v1.4~v1.5 §5.4.3 (b2 档) | **允许抓取 + `noindex, follow`，且该页不输出 canonical**。`Disallow` 只挡抓取不挡收录，被外链指向时仍以裸链接进结果、而爬虫读不到 `noindex`。需求台账同为 W15 |
+| A-W16 | "`robots.txt` 含 `Disallow: /*/search`（一条前台路径）" | v1.4~v1.5 §5.4.3 | **`robots.txt` 只剩 `/api` 一条，不含任何前台路径**。这是正确状态、不是配置遗漏；QA 不得把"cart/checkout/search 无 Disallow"记为缺陷。需求台账同为 W16 |
+| A-W17 | "分类页分页从第 2 页起 `canonical` 自引用"（未加筛选限定） | v1.4~v1.5 §5.4.3 | **带任何筛选/排序参数的分页，不论第几页，`canonical` 一律指该分类页的无参第 1 页**；自引用**仅**适用于不带筛选/排序参数的分页。需求台账把这条记为 W18 |
+| A-W18 | "重置进行中 → 409 `SetupAlreadyCompleted`"（即 B.4 #3 的推翻） | v1.4~v1.5 §5.3.3 | **重置进行中 = 503 + `Retry-After` + `SetupResetting`**，重置完成后回落 409。理由：409 语义是"已装好别再试"，用它表达"等一下"会让运维放弃排障。**这是本项目第一次出现"作废的作废"，记此提醒：推翻结论时先确认推翻依据是否成立**。需求台账把这条记为 W22 |
+| A-W19 | 重置窗口错误码写作 **`RESET_IN_PROGRESS`**（全大写 + 下划线） | v1.6 §5.3.3 / 附录 B.4b | 定名 **`SetupResetting`**（与 `SetupAlreadyCompleted` 同一命名族）。**理由不是"哪种更好看"，是契约稳定性**：错误码进 OpenAPI 枚举后就是永久契约，实现侧一按自己习惯规范化（`SETUP_RESETTING`）就产生 breaking change。需求台账把这条记为 W23 |
+
+> **关于台账本身的一条教训**：本表的价值在于"作废的作废"这一形态（A-W9 ↔ A-W18）—— 它让"我曾经对过、后来改错了、又改回来"这件事不会被两次覆盖抹掉。**只记最终结论的台账会让人以为这个判断一次就对**，从而在下一次遇到同类问题时重复同样的错误推论。

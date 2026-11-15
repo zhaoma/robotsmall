@@ -1,0 +1,497 @@
+{
+  "formatVersion": 1,
+  "key": "womenswear",
+  "name": "女装",
+  "description": "女装垂直站的示例分类、属性集与变体矩阵（颜色 × 尺码）。",
+  "defaults": {
+    "currency": "CNY",
+    "locale": "zh",
+    "weightUnit": "g",
+    "timezone": "Asia/Shanghai",
+    "currencyDecimals": 2,
+    "themeTokens": {
+      "color.primary": "#8c3a4a",
+      "font.sans": "\"Source Han Serif SC\", Georgia, serif"
+    },
+    "themeId": "base"
+  },
+  "attributes": [
+    {
+      "code": "color",
+      "labelKey": "attr.color.label",
+      "dataType": "enum",
+      "scope": "variant",
+      "variantAxis": true,
+      "multiple": false,
+      "filterable": true,
+      "options": [
+        {
+          "code": "black",
+          "labelKey": "attr.color.option.black",
+          "sortOrder": 1
+        },
+        {
+          "code": "white",
+          "labelKey": "attr.color.option.white",
+          "sortOrder": 2
+        },
+        {
+          "code": "beige",
+          "labelKey": "attr.color.option.beige",
+          "sortOrder": 3
+        },
+        {
+          "code": "navy",
+          "labelKey": "attr.color.option.navy",
+          "sortOrder": 4
+        },
+        {
+          "code": "wine",
+          "labelKey": "attr.color.option.wine",
+          "sortOrder": 5
+        },
+        {
+          "code": "sage",
+          "labelKey": "attr.color.option.sage",
+          "sortOrder": 6
+        }
+      ]
+    },
+    {
+      "code": "size",
+      "labelKey": "attr.size.label",
+      "dataType": "enum",
+      "scope": "variant",
+      "variantAxis": true,
+      "multiple": false,
+      "filterable": true,
+      "options": [
+        {
+          "code": "xs",
+          "labelKey": "attr.size.option.xs",
+          "sortOrder": 1
+        },
+        {
+          "code": "s",
+          "labelKey": "attr.size.option.s",
+          "sortOrder": 2
+        },
+        {
+          "code": "m",
+          "labelKey": "attr.size.option.m",
+          "sortOrder": 3
+        },
+        {
+          "code": "l",
+          "labelKey": "attr.size.option.l",
+          "sortOrder": 4
+        },
+        {
+          "code": "xl",
+          "labelKey": "attr.size.option.xl",
+          "sortOrder": 5
+        }
+      ]
+    },
+    {
+      "code": "fabric",
+      "labelKey": "attr.fabric.label",
+      "dataType": "enum",
+      "scope": "product",
+      "variantAxis": false,
+      "multiple": false,
+      "filterable": true,
+      "options": [
+        {
+          "code": "cotton",
+          "labelKey": "attr.fabric.option.cotton",
+          "sortOrder": 1
+        },
+        {
+          "code": "silk",
+          "labelKey": "attr.fabric.option.silk",
+          "sortOrder": 2
+        },
+        {
+          "code": "wool",
+          "labelKey": "attr.fabric.option.wool",
+          "sortOrder": 3
+        },
+        {
+          "code": "polyester",
+          "labelKey": "attr.fabric.option.polyester",
+          "sortOrder": 4
+        }
+      ]
+    },
+    {
+      "code": "fit",
+      "labelKey": "attr.fit.label",
+      "dataType": "enum",
+      "scope": "product",
+      "variantAxis": false,
+      "multiple": false,
+      "filterable": true,
+      "options": [
+        {
+          "code": "slim",
+          "labelKey": "attr.fit.option.slim",
+          "sortOrder": 1
+        },
+        {
+          "code": "regular",
+          "labelKey": "attr.fit.option.regular",
+          "sortOrder": 2
+        },
+        {
+          "code": "loose",
+          "labelKey": "attr.fit.option.loose",
+          "sortOrder": 3
+        }
+      ]
+    },
+    {
+      "code": "insulation",
+      "labelKey": "attr.insulation.label",
+      "dataType": "enum",
+      "scope": "product",
+      "variantAxis": false,
+      "multiple": false,
+      "filterable": true,
+      "options": [
+        {
+          "code": "light",
+          "labelKey": "attr.insulation.option.light",
+          "sortOrder": 1
+        },
+        {
+          "code": "mid",
+          "labelKey": "attr.insulation.option.mid",
+          "sortOrder": 2
+        },
+        {
+          "code": "heavy",
+          "labelKey": "attr.insulation.option.heavy",
+          "sortOrder": 3
+        }
+      ]
+    }
+  ],
+  "attributeSets": [
+    {
+      "code": "apparel",
+      "labelKey": "set.apparel.label",
+      "attributes": [
+        "color",
+        "size",
+        "fabric",
+        "fit"
+      ]
+    },
+    {
+      "code": "outerwear",
+      "labelKey": "set.outerwear.label",
+      "attributes": [
+        "color",
+        "size",
+        "fabric",
+        "fit",
+        "insulation"
+      ]
+    }
+  ],
+  "categories": [
+    {
+      "key": "tops",
+      "labelKey": "category.tops.label",
+      "attributeSet": "apparel",
+      "sortOrder": 1,
+      "products": [
+        {
+          "key": "tee_basic",
+          "nameKey": "product.tee_basic.name",
+          "categoryKey": "tops",
+          "basePriceCents": 12900,
+          "variantAxes": [
+            "color",
+            "size"
+          ],
+          "variantOptions": {
+            "color": [
+              "black",
+              "white",
+              "sage"
+            ],
+            "size": [
+              "xs",
+              "s",
+              "m",
+              "l",
+              "xl"
+            ]
+          },
+          "attributeCodes": [
+            "fabric",
+            "fit"
+          ]
+        },
+        {
+          "key": "shirt_oxford",
+          "nameKey": "product.shirt_oxford.name",
+          "categoryKey": "tops",
+          "basePriceCents": 32900,
+          "variantAxes": [
+            "color",
+            "size"
+          ],
+          "variantOptions": {
+            "color": [
+              "white",
+              "navy"
+            ],
+            "size": [
+              "s",
+              "m",
+              "l",
+              "xl"
+            ]
+          },
+          "attributeCodes": [
+            "fabric",
+            "fit"
+          ]
+        },
+        {
+          "key": "knit_cardigan",
+          "nameKey": "product.knit_cardigan.name",
+          "categoryKey": "tops",
+          "basePriceCents": 45900,
+          "variantAxes": [
+            "color",
+            "size"
+          ],
+          "variantOptions": {
+            "color": [
+              "beige",
+              "navy",
+              "wine"
+            ],
+            "size": [
+              "s",
+              "m",
+              "l"
+            ]
+          },
+          "attributeCodes": [
+            "fabric",
+            "fit"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "dresses",
+      "labelKey": "category.dresses.label",
+      "attributeSet": "apparel",
+      "sortOrder": 2,
+      "products": [
+        {
+          "key": "dress_slip",
+          "nameKey": "product.dress_slip.name",
+          "categoryKey": "dresses",
+          "basePriceCents": 59900,
+          "variantAxes": [
+            "color",
+            "size"
+          ],
+          "variantOptions": {
+            "color": [
+              "black",
+              "wine",
+              "beige"
+            ],
+            "size": [
+              "xs",
+              "s",
+              "m",
+              "l"
+            ]
+          },
+          "attributeCodes": [
+            "fabric",
+            "fit"
+          ]
+        },
+        {
+          "key": "dress_wrap",
+          "nameKey": "product.dress_wrap.name",
+          "categoryKey": "dresses",
+          "basePriceCents": 69900,
+          "variantAxes": [
+            "color",
+            "size"
+          ],
+          "variantOptions": {
+            "color": [
+              "navy",
+              "sage"
+            ],
+            "size": [
+              "s",
+              "m",
+              "l",
+              "xl"
+            ]
+          },
+          "attributeCodes": [
+            "fabric",
+            "fit"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "bottoms",
+      "labelKey": "category.bottoms.label",
+      "attributeSet": "apparel",
+      "sortOrder": 3,
+      "products": [
+        {
+          "key": "jeans_straight",
+          "nameKey": "product.jeans_straight.name",
+          "categoryKey": "bottoms",
+          "basePriceCents": 39900,
+          "variantAxes": [
+            "color",
+            "size"
+          ],
+          "variantOptions": {
+            "color": [
+              "navy",
+              "black"
+            ],
+            "size": [
+              "s",
+              "m",
+              "l",
+              "xl"
+            ]
+          },
+          "attributeCodes": [
+            "fabric",
+            "fit"
+          ]
+        },
+        {
+          "key": "skirt_pleated",
+          "nameKey": "product.skirt_pleated.name",
+          "categoryKey": "bottoms",
+          "basePriceCents": 35900,
+          "variantAxes": [
+            "color",
+            "size"
+          ],
+          "variantOptions": {
+            "color": [
+              "black",
+              "beige",
+              "wine"
+            ],
+            "size": [
+              "xs",
+              "s",
+              "m"
+            ]
+          },
+          "attributeCodes": [
+            "fabric",
+            "fit"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "outerwear",
+      "labelKey": "category.outerwear.label",
+      "attributeSet": "outerwear",
+      "sortOrder": 4,
+      "products": [
+        {
+          "key": "coat_wool",
+          "nameKey": "product.coat_wool.name",
+          "categoryKey": "outerwear",
+          "basePriceCents": 129900,
+          "variantAxes": [
+            "color",
+            "size"
+          ],
+          "variantOptions": {
+            "color": [
+              "beige",
+              "navy",
+              "black"
+            ],
+            "size": [
+              "s",
+              "m",
+              "l",
+              "xl"
+            ]
+          },
+          "attributeCodes": [
+            "fabric",
+            "fit",
+            "insulation"
+          ]
+        },
+        {
+          "key": "jacket_puffer",
+          "nameKey": "product.jacket_puffer.name",
+          "categoryKey": "outerwear",
+          "basePriceCents": 89900,
+          "variantAxes": [
+            "color",
+            "size"
+          ],
+          "variantOptions": {
+            "color": [
+              "black",
+              "white",
+              "sage"
+            ],
+            "size": [
+              "s",
+              "m",
+              "l",
+              "xl"
+            ]
+          },
+          "attributeCodes": [
+            "fabric",
+            "fit",
+            "insulation"
+          ]
+        }
+      ]
+    }
+  ],
+  "shippingZones": [
+    {
+      "key": "cn_mainland",
+      "labelKey": "shipping.cn_mainland.label",
+      "countries": [
+        "CN"
+      ],
+      "flatRateCents": 1000,
+      "freeOverCents": 19900
+    }
+  ],
+  "taxRules": [
+    {
+      "country": "CN",
+      "rateBps": 1300,
+      "labelKey": "tax.cn.label",
+      "includesTax": true
+    }
+  ]
+}

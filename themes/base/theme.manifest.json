@@ -1,0 +1,16 @@
+{
+  "formatVersion": 1,
+  "id": "base",
+  "name": "Base",
+  "version": "1.0.0",
+  "supports": {
+    "storefront": ">=1.0.0 <2.0.0"
+  },
+  "entry": "./index.ts",
+  "tokens": "./tokens.json",
+  "editableSchema": "./editable.schema.json",
+  "blocksSchema": "./blocks.schema.json",
+  "layouts": ["default", "product", "collection", "search", "cart", "checkout", "page"],
+  "blocks": ["hero", "productGrid", "richText", "footer"],
+  "preview": "./preview.png"
+}

@@ -1,0 +1,36 @@
+<Project>
+
+  <!--
+    全仓统一的编译契约。所有项目（src/ 与 tests/）都继承这里，禁止在单个 csproj 里覆盖
+    TargetFramework / Nullable / ImplicitUsings / TreatWarningsAsErrors —— 门禁步骤 1 的
+    `dotnet build -warnaserror` 依赖这四个属性的全局一致性。
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- 门禁步骤 1：零警告。任何 CS/CA/NU 警告都直接失败。 -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- 服务端只做机器对机器输出；不引入 ICU 依赖，容器镜像更小（部署文档 §3）。 -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- 迁移/生成的产物必须可重现（UTF-8 无 BOM、LF），否则门禁步骤 11 的 diff 会假红。 -->
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <!-- 测试项目统一标记，方便将来 `dotnet test` 过滤与 CI 分片 -->
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('/tests/'))">
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

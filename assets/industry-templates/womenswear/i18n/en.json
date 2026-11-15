@@ -1,0 +1,56 @@
+{
+  "template.name": "Womenswear",
+  "template.description": "Sample categories, attribute sets and a colour x size variant matrix for a womenswear store.",
+
+  "category.tops.label": "Tops",
+  "category.dresses.label": "Dresses",
+  "category.bottoms.label": "Bottoms",
+  "category.outerwear.label": "Outerwear",
+
+  "set.apparel.label": "Apparel attributes",
+  "set.outerwear.label": "Outerwear attributes",
+
+  "attr.color.label": "Colour",
+  "attr.color.option.black": "Black",
+  "attr.color.option.white": "White",
+  "attr.color.option.beige": "Beige",
+  "attr.color.option.navy": "Navy",
+  "attr.color.option.wine": "Wine",
+  "attr.color.option.sage": "Sage",
+
+  "attr.size.label": "Size",
+  "attr.size.option.xs": "XS",
+  "attr.size.option.s": "S",
+  "attr.size.option.m": "M",
+  "attr.size.option.l": "L",
+  "attr.size.option.xl": "XL",
+
+  "attr.fabric.label": "Fabric",
+  "attr.fabric.option.cotton": "Cotton",
+  "attr.fabric.option.silk": "Silk",
+  "attr.fabric.option.wool": "Wool",
+  "attr.fabric.option.polyester": "Polyester",
+
+  "attr.fit.label": "Fit",
+  "attr.fit.option.slim": "Slim",
+  "attr.fit.option.regular": "Regular",
+  "attr.fit.option.loose": "Loose",
+
+  "attr.insulation.label": "Insulation",
+  "attr.insulation.option.light": "Light",
+  "attr.insulation.option.mid": "Medium",
+  "attr.insulation.option.heavy": "Heavy",
+
+  "product.tee_basic.name": "Essential Crew Neck Tee",
+  "product.shirt_oxford.name": "Oxford Shirt",
+  "product.knit_cardigan.name": "Knitted Cardigan",
+  "product.dress_slip.name": "Slip Dress",
+  "product.dress_wrap.name": "Wrap Dress",
+  "product.jeans_straight.name": "Straight Leg Jeans",
+  "product.skirt_pleated.name": "Pleated Skirt",
+  "product.coat_wool.name": "Wool Coat",
+  "product.jacket_puffer.name": "Light Down Jacket",
+
+  "shipping.cn_mainland.label": "Mainland China",
+  "tax.cn.label": "Mainland China VAT"
+}

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OpenStore.Infrastructure</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Infrastructure → Application（Domain 由 ProjectReference 传递可见）。绝不引用 OpenStore.Api。 -->
+  <ItemGroup>
+    <ProjectReference Include="..\OpenStore.Application\OpenStore.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <!-- Design 只在设计期（dotnet ef）与迁移期需要，不进运行时依赖 -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

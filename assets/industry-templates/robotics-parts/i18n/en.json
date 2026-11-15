@@ -1,0 +1,51 @@
+{
+  "template.name": "Desktop Robotics Parts",
+  "template.description": "Sample catalog and attribute sets for desktop robot frames, arms, grippers, sensors and power supplies.",
+
+  "category.frames.label": "Frames",
+  "category.arms.label": "Robot Arms",
+  "category.grippers.label": "Grippers",
+  "category.sensors.label": "Sensors",
+  "category.power.label": "Power",
+
+  "set.structure.label": "Structural attributes",
+  "set.electronics.label": "Electronics attributes",
+
+  "attr.compatibility.label": "Compatible controller",
+  "attr.compatibility.option.rpi4": "Raspberry Pi 4B",
+  "attr.compatibility.option.rpi5": "Raspberry Pi 5",
+  "attr.compatibility.option.jetson_orin": "Jetson Orin Nano",
+  "attr.compatibility.option.x86_ubuntu": "x86 industrial PC (Ubuntu)",
+  "attr.compatibility.option.arduino_uno": "Arduino Uno",
+
+  "attr.interface.label": "Interface",
+  "attr.interface.option.usb": "USB",
+  "attr.interface.option.uart": "UART serial",
+  "attr.interface.option.can": "CAN bus",
+  "attr.interface.option.i2c": "I2C",
+
+  "attr.payload_kg.label": "Rated payload",
+  "attr.reach_mm.label": "Working radius",
+  "attr.voltage_v.label": "Operating voltage",
+  "attr.capacity_mah.label": "Battery capacity",
+
+  "attr.material.label": "Body material",
+  "attr.material.option.aluminum": "6061 aluminium",
+  "attr.material.option.carbon": "Carbon fibre",
+  "attr.material.option.steel": "Stainless steel",
+  "attr.material.option.abs": "ABS engineering plastic",
+
+  "product.frame_mini.name": "Mini Aluminium Frame",
+  "product.frame_pro.name": "Pro Carbon Frame",
+  "product.arm_4dof.name": "4-DOF Robot Arm",
+  "product.arm_6dof.name": "6-DOF Collaborative Arm",
+  "product.gripper_parallel.name": "Parallel Gripper",
+  "product.gripper_vacuum.name": "Vacuum Suction Gripper",
+  "product.sensor_lidar.name": "2D LiDAR",
+  "product.sensor_imu.name": "9-Axis IMU Module",
+  "product.power_psu_24v.name": "24V Regulated Power Supply",
+  "product.power_battery_pack.name": "Portable Battery Pack",
+
+  "shipping.cn_mainland.label": "Mainland China",
+  "tax.cn.label": "Mainland China VAT"
+}

@@ -1,0 +1,2820 @@
+openapi: 3.0.3
+
+info:
+  title: OpenStore API（M1 契约单一真源）
+  version: 0.2.0-m1
+  description: |
+    # 本文件的地位
+
+    本契约是 **M1 的单一真源（single source of truth）**。代码按它反向实现，前端 SDK 与类型由它生成。
+
+    与 `docs/03-后端设计.md` §5 的关系，按下面三条读：
+
+    1. **字段名、枚举值、状态码、错误码以本文件为准**。§5 是散文式表格，个别地方一个单元格里写了两三件事（例如 `cartSummary{count,subtotalAmountMinor}`、
+       `movements` 既给 `page` 参数又给裸数组），本文件把它们收敛成**唯一一种写法**。凡本文件与 §5 不一致，视为"§5 表述不精确"，
+       已逐条记在 `x-doc-deltas`（见本文件末尾）与 `docs/03` 的修订请求里；**如属语义级冲突（不是表述问题），须回报主理人裁决，不得由实现方单方面拍板**。
+    2. **契约里不出现的东西，就是有意不出现的**。例如 storefront 任何 DTO 都不含 `onHand/reserved/sold/cost/margin/internalNote`（§5.1 数据隔离表），
+       不要"顺手补上"。
+    3. **破坏性变更**：只允许"新增字段 + 旧字段保留 1 个 minor"；`amount` / `totalPages` / `/checkout/submit` / `sort=relevance` 这四种旧写法**已作废**
+       （`docs/03` §13 台账），本文件里出现它们即为 bug。
+
+    # 全局约定（读契约前先读这 6 条）
+
+    | 约定 | 内容 |
+    |---|---|
+    | 金额 | **一律** `{"amountMinor": 29900, "currency": "CNY"}`（`#/components/schemas/Money`）。禁止裸数字、禁止 `"29.90"` 字符串、**禁止旧字段名 `amount`**。列表里的价格、变体价、运费、退款额全部如此 |
+    | 分页 | 请求 `page`/`pageSize`；响应固定 `{items, page, pageSize, total, pageCount}`（`pageCount`，不是 `totalPages`）。`pageSize` 默认 24、上限 100（超限 `400 PAGE_SIZE_EXCEEDED`）；`page` 上限 100（超限 `400 PAGE_OUT_OF_RANGE`）；`page` 未超 100 但超过总页数 → **200 + `items: []`**，不是错误 |
+    | 时间 | ISO-8601 带偏移（`2025-11-15T16:34:00+08:00`）。服务端 UTC 存储，按 `StoreSettings.TimeZone` 或 `locale` 渲染 |
+    | 枚举 | 全部字符串（后端 `JsonStringEnumConverter`），例如 `status: Active`，绝不出现 `1`/`0` 数字魔法值 |
+    | 错误 | 全部 `application/problem+json`（RFC 7807）+ 扩展 `code`/`correlationId`/`errors`/`details`。`code` 是**封闭枚举**（`#/components/schemas/ProblemCode`），前端只写一套 `code → i18n key` 的映射 |
+    | locale | 所有含内容的读接口接受 `?locale=zh\|en`，缺省默认语言；非法 → `400 LOCALE_NOT_ENABLED`。**"该语言无译文"不是错误**：字段级缺失回退默认语言，页级缺失 `404`（判据见 §5.3.1） |
+
+    # 金额为什么不写成 `29.90`
+
+    `29900` 是整数分，数据库列是 `INTEGER`/`BIGINT`，前端按 `currency` 的小数位格式化。一旦允许字符串小数，
+    `0.1 + 0.2` 与四舍五入规则会在"下单服务"和"支付通道"之间分叉，对账永远差几分钱。
+
+    # 鉴权口径（两套 Cookie，互不串味）
+
+    - 管理端：`os_admin_sid`（HttpOnly / Secure / SameSite=Lax / **Path=/api/admin**）+ `os_admin_csrf`（非 HttpOnly，供 double-submit，Path=/）。
+      `Path` 收窄是安全边界：商城页面上的任何脚本都拿不到管理员会话（§6.1）。
+    - 所有 `POST/PUT/PATCH/DELETE /api/admin/*` **必须**带 `X-CSRF-Token`（值 = `os_admin_csrf` 的值），否则 `403 AUTH_CSRF_INVALID`。
+      本文件在每个写操作上把它声明为 required header 参数，前端由 `withCsrf()` 统一注入。
+    - **未登录调 admin 接口 → 401 `AUTH_SESSION_EXPIRED`**（不是 403），也不区分"端点不存在"与"没权限"，不泄露端点存在性。
+    - 权限点是**唯一权威**：每个 `/api/admin/**` 操作都用 `x-permission` 扩展声明所需权限点（值域见 `#/components/schemas/PermissionCode`，
+      严格照 `docs/03` §6.4 矩阵）。前端隐藏菜单只是 UX，**服务端 403 才是结论**。裸"只校验已登录"的端点在本契约里不存在（除 auth 三兄弟）。
+
+    # 幂等与并发
+
+    - 变体矩阵 `POST /variants/apply` **幂等**：同一 `plan` 重复 apply 不产生任何行变更，返回 `changed: false`。
+    - 库存调整、批量改库存走 `StockItem.AdjustOnHand` + 不可变流水（`StockLedger`），并受 `OnHand >= Reserved + Sold` 约束。
+    - 可变资源（商品/分类/属性/属性集）响应带 `version`；更新时带上它即开启乐观锁，不匹配 → `409 CONCURRENT_UPDATE`。
+      **不传 = last-write-wins**（M1 单管理员场景可接受，两个浏览器窗口同时编辑则会被静默覆盖——这是明确的取舍，不是遗漏）。
+
+    # 数据源故障 ≠ 空结果（AC-10 负向断言）
+
+    `200 + items: []` 只允许在"确实没有匹配数据"（`total` 为真实 0）时返回。DB 不可用、查询报错、缓存源数据读失败一律
+    `503 SERVICE_UNAVAILABLE` + `ProblemDetails` + `Retry-After`。把异常吞成空列表会让"空白的商品页"被搜索引擎收录，
+    比不收录更糟；也会让反代的可用性告警因为"永远 200"而不响。
+  contact:
+    name: 程不宕（后端服务工程师）
+  license:
+    name: Proprietary
+
+servers:
+  - url: /
+    description: 同源部署（Caddy 反代 → API）。所有对外绝对 URL 只能由 `StoreSettings.PublicSiteUrl` 生成，禁止读 `Host` 头（AC-10）
+
+tags:
+  - name: Admin.Auth
+    description: 管理员认证与会话（真实 Session，DB 校验，封禁/改密立即生效）
+  - name: Admin.Taxonomy
+    description: 分类 / 属性 / 属性集（录商品的前置数据）
+  - name: Admin.Catalog
+    description: 商品、变体矩阵、图片、上下架
+  - name: Admin.Inventory
+    description: 库存列表与手工调整（只追加流水，无编辑/删除端点）
+  - name: Storefront.Catalog
+    description: 门店公开目录读接口（匿名可访问）
+  - name: Health
+    description: 存活/就绪探针（供容器编排与反代直取，仅内网）
+
+paths:
+
+  # ==========================================================================
+  # Admin.Auth
+  # ==========================================================================
+
+  /api/admin/auth/login:
+    post:
+      operationId: adminLogin
+      tags: [Admin.Auth]
+      summary: 管理员登录
+      description: |
+        失败统一 `401 AUTH_INVALID_CREDENTIALS`（**不区分**账号不存在与密码错，防账号枚举：对不存在账号也跑一次 dummy hash，
+        响应时间差 < 20ms）。连续 5 次失败 → 账号锁 15 分钟 → `423 AUTH_LOCKED` + `details.unlockAt`（明确告知何时可试，
+        减少客服，而不是让用户自己数着次数猜）。
+
+        成功后：① 先删旧 Session 再建新（防 session fixation）② 两条 Set-Cookie ③ 返回权限点集合供前端渲染菜单（**仅 UX**）。
+
+        仍要做 `Origin` 校验（防登录 CSRF）：`Origin` 缺失或非本站 → `403 AUTH_CSRF_INVALID`。此端点**不要求** `X-CSRF-Token`（还没有会话）。
+      security: []
+      x-permission: null
+      x-csrf-required: false
+      x-rate-limit: { policy: login, permitsPerMinutePerEmail: 5, permitsPer15MinutesPerIp: 20 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, maxLength: 320, example: owner@example.com }
+                password: { type: string, minLength: 1, maxLength: 128, format: password }
+      responses:
+        '200':
+          description: 登录成功（服务端已建 Session）
+          headers:
+            Set-Cookie:
+              description: |
+                同时下发两条 Cookie（OpenAPI 的 header 名唯一，故在此并列说明）：
+                1. `os_admin_sid=<32B base64url>; HttpOnly; Secure; SameSite=Lax; Path=/api/admin`（会话，DB 只存 SHA-256）
+                2. `os_admin_csrf=<32B base64url>; Secure; SameSite=Lax; Path=/`（非 HttpOnly，前端读出来放进 `X-CSRF-Token`）
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminIdentity' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '423': { $ref: '#/components/responses/LockedProblem' }
+        '429': { $ref: '#/components/responses/TooManyRequestsProblem' }
+
+  /api/admin/auth/logout:
+    post:
+      operationId: adminLogout
+      tags: [Admin.Auth]
+      summary: 管理员登出
+      description: |
+        `Session.RevokedAt = now, RevokeReason = logout` + 清 Cookie。**服务端撤销是权威**：登出后浏览器回退按钮回到旧页面，
+        任何 `/api/admin/*` 请求都是 `401`（US-E8-01）。幂等：已撤销的会话重复登出仍 `204`。
+      security: [{ adminSession: [] }]
+      x-permission: null
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204': { description: 已登出（Cookie 已清） }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+
+  /api/admin/auth/me:
+    get:
+      operationId: adminMe
+      tags: [Admin.Auth]
+      summary: 当前管理员 + 权限点
+      description: |
+        admin SPA 的登录态判定入口（`os_admin_sid` 的 Path 限定在 `/api/admin`，所以 `/admin` 静态页导航时浏览器不发 Cookie，
+        不能靠"有没有 Cookie"判断）。`sessionExpiresAt` 供前端提示"会话即将过期"。
+      security: [{ adminSession: [] }]
+      x-permission: null
+      responses:
+        '200':
+          description: 当前会话对应的管理员
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/AdminIdentity'
+                  - type: object
+                    required: [sessionExpiresAt]
+                    properties:
+                      sessionExpiresAt:
+                        type: string
+                        format: date-time
+                        description: 会话绝对过期时间（Admin 默认 7 天）；空闲过期另算（默认 120 分钟）
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+
+  /api/admin/auth/change-password:
+    post:
+      operationId: adminChangePassword
+      tags: [Admin.Auth]
+      summary: 修改自己的密码
+      description: |
+        成功后 revoke **该管理员全部会话**（含当前这条）+ 轮换 `SecurityStamp` + 轮换 CSRF，所以前端必须重新登录（INV-AD02 / AC-15）。
+        "改密即踢下线"是选 Session 而非 JWT 的核心理由：JWT 要靠黑名单，等于又做一遍 Session。
+
+        密码策略（§6.7）：12–128 字符、不得纯数字、不得命中 Top-1000 弱口令。违反 → `400 VALIDATION_FAILED`（字段级）。
+        `currentPassword` 不匹配同样走 `400 VALIDATION_FAILED`（`errors.currentPassword`）——此时用户已认证，
+        不需要用 401 去防枚举，字段级提示更有用。
+      security: [{ adminSession: [] }]
+      x-permission: null
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, minLength: 1, maxLength: 128, format: password }
+                newPassword: { type: string, minLength: 12, maxLength: 128, format: password }
+      responses:
+        '204': { description: 已改密（全部会话已撤销，需重新登录） }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '429': { $ref: '#/components/responses/TooManyRequestsProblem' }
+
+  # ==========================================================================
+  # Admin.Taxonomy —— 分类
+  # ==========================================================================
+
+  /api/admin/categories:
+    get:
+      operationId: adminListCategories
+      tags: [Admin.Taxonomy]
+      summary: 分类树（管理端）
+      description: |
+        一次返回整棵树（分类总量在百级，全表进内存组装，**不分页**：分页的树没有意义）。
+        每个节点带 `childCount` / `productCount`，供前端在"删除"按钮上提前显示拦截原因，而不是等用户点了才报错。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.read
+      responses:
+        '200':
+          description: 分类树（`children` 递归）
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AdminCategory' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableProblem' }
+    post:
+      operationId: adminCreateCategory
+      tags: [Admin.Taxonomy]
+      summary: 新建分类
+      description: |
+        新建即 `Status=Active`、`sortOrder` 缺省追加到同级末尾。`names` 的默认语言键必填（INV-P01 同源规则）。
+        `slugs` 缺省时按对应语言 `names` 规范化生成（小写 + 连字符）；`(locale, slug)` 全局唯一，冲突 → `409 VALIDATION_FAILED`（字段级）。
+        深度上限 5（INV-C02）→ 超限 409。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryUpsertRequest' }
+      responses:
+        '201':
+          description: 已创建
+          headers:
+            Location: { schema: { type: string, example: /api/admin/categories/01J8ZC4WQ7 }, description: 新建分类的规范地址 }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminCategory' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/categories/reorder:
+    put:
+      operationId: adminReorderCategories
+      tags: [Admin.Taxonomy]
+      summary: 拖拽排序 / 移动分类
+      description: |
+        一次提交整棵受影响子树的 `(id, parentId, sortOrder)`，在**单事务内**校验：
+        ① 无环（INV-C01）→ `409 CATALOG_CATEGORY_CYCLE`；② 深度 ≤ 5（INV-C02）→ `409 CATALOG_CATEGORY_DEPTH_EXCEEDED`；
+        ③ 同父下 `sortOrder` 唯一（INV-C03）→ `409 CATALOG_CATEGORY_SORT_CONFLICT`。
+        移动节点时服务端重算整条子树的物化路径 `Path`（INV-C06），并写 `SlugHistory`（若 slug 因移动规则而变）。
+        整树校验要么全成要么全不成：**不做部分应用**（部分应用会让树的 `Path` 与 `ParentId` 短暂互斥，是最难查的状态）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              minItems: 1
+              maxItems: 500
+              items: { $ref: '#/components/schemas/CategorySortItem' }
+      responses:
+        '204': { description: 已应用（整树校验通过） }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/categories/{id}:
+    get:
+      operationId: adminGetCategory
+      tags: [Admin.Taxonomy]
+      summary: 分类详情
+      description: 单个分类节点（含 `childCount`/`productCount` 与两语言名、slug）。分类树请用 `GET /api/admin/categories`。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.read
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: 分类节点
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminCategory' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+    put:
+      operationId: adminUpdateCategory
+      tags: [Admin.Taxonomy]
+      summary: 更新分类
+      description: |
+        全量更新 `names` / `slugs` / `parentId` / `sortOrder` / `attributeSetId` / `status`。
+        `slugs` 变更会写 `SlugHistory` → 旧 URL 走 301（AC-11）。移动父节点等同 `reorder` 的单项版本，同样校验无环与深度。
+        带 `version` 则做乐观锁（不匹配 `409 CONCURRENT_UPDATE`）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryUpsertRequest' }
+      responses:
+        '200':
+          description: 更新后的分类节点
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminCategory' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+    delete:
+      operationId: adminDeleteCategory
+      tags: [Admin.Taxonomy]
+      summary: 删除分类（软删）
+      description: |
+        有子分类或已挂商品时**拒绝**（INV-C05），`409 CATALOG_CATEGORY_NOT_EMPTY` + `details{childCount, productCount}`
+        —— 把数字给前端，前端才能显示"该分类下还有 3 个子分类、12 个商品"，而不是干巴巴一句"删除失败"。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204': { description: 已软删 }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  # ==========================================================================
+  # Admin.Taxonomy —— 属性
+  # ==========================================================================
+
+  /api/admin/attributes:
+    get:
+      operationId: adminListAttributes
+      tags: [Admin.Taxonomy]
+      summary: 属性定义列表
+      description: |
+        **不分页**：属性定义是百级以内的小集合，管理端要一次拿全（分类编辑、属性集编辑、商品录入三处都要做下拉）。
+        分页会让每个下拉框先请求一次"总数"，纯浪费。`usageCount` 让前端提前禁用"改 dataType"这类危险操作。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.read
+      parameters:
+        - { name: scope, in: query, required: false, description: 按作用域筛选（Variant 轴只能取 Scope=Variant 且 DataType=Enum）, schema: { type: string, enum: [Product, Variant] } }
+        - { name: q, in: query, required: false, description: 按 code / 名称模糊匹配, schema: { type: string, maxLength: 100 } }
+      responses:
+        '200':
+          description: 属性定义数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AttributeDefinition' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+    post:
+      operationId: adminCreateAttribute
+      tags: [Admin.Taxonomy]
+      summary: 新建属性定义
+      description: |
+        约束（INV-A01/A02/A04/A05）：`code` 全局唯一且匹配 `^[a-z][a-zA-Z0-9]{1,39}$`；默认语言名称必填；
+        `scope=Variant` 只允许 `dataType=Enum`；`dataType=Enum/MultiEnum` 必须 ≥1 个 option。
+        冲突码：`code` 重复 → `409 CATALOG_CODE_DUPLICATE`；`scope/dataType` 组合非法或名称缺失 → `400 VALIDATION_FAILED`（字段级）或
+        `409 AXIS_SCOPE_INVALID`。`dataType/scope` 一旦有 `usageCount > 0` 就不可改（INV-A03）→ `409 CATALOG_ATTRIBUTE_IN_USE`。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttributeUpsertRequest' }
+      responses:
+        '201':
+          description: 已创建
+          headers:
+            Location: { schema: { type: string, example: /api/admin/attributes/01J8ZD2M5K } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttributeDefinition' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/attributes/{id}:
+    get:
+      operationId: adminGetAttribute
+      tags: [Admin.Taxonomy]
+      summary: 属性定义详情
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.read
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: 属性定义
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttributeDefinition' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+    put:
+      operationId: adminUpdateAttribute
+      tags: [Admin.Taxonomy]
+      summary: 更新属性定义
+      description: |
+        `options` 按 `code` upsert：列表里没有的旧 option **不删除**，置为 `isActive=false`（已被商品引用时必须保留行，否则
+        `ProductAttributeValue.OptionId` 会成孤儿）。`dataType`/`scope` 在有使用时报 `409 CATALOG_ATTRIBUTE_IN_USE`，
+        `details{usageCount}` 让前端知道"先解绑多少个商品才能改"。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttributeUpsertRequest' }
+      responses:
+        '200':
+          description: 更新后的属性定义
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttributeDefinition' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+    delete:
+      operationId: adminDeleteAttribute
+      tags: [Admin.Taxonomy]
+      summary: 删除属性定义（软删）
+      description: 已被商品使用（`usageCount > 0`）时拒绝：`409 CATALOG_ATTRIBUTE_IN_USE` + `details{usageCount}`。未使用时软删。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204': { description: 已软删 }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/attribute-sets:
+    get:
+      operationId: adminListAttributeSets
+      tags: [Admin.Taxonomy]
+      summary: 属性集列表
+      description: 不分页（同 `GET /api/admin/attributes` 的理由）。`members` 内联，管理端一次拿全即可渲染"分类挂哪个属性集、含哪些属性"。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.read
+      responses:
+        '200':
+          description: 属性集数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AttributeSet' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+    post:
+      operationId: adminCreateAttributeSet
+      tags: [Admin.Taxonomy]
+      summary: 新建属性集
+      description: |
+        INV-AS01/02/03：`code` 唯一（冲突 → `409 CATALOG_CODE_DUPLICATE`）、成员属性不重复（`409 VALIDATION_FAILED` 字段级）、
+        `Scope=Variant` 的成员数 ≤ 3（`409 AXIS_LIMIT_EXCEEDED`）。`isRequired` 挂在成员上（同一属性在不同分类可必填/选填）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttributeSetUpsertRequest' }
+      responses:
+        '201':
+          description: 已创建
+          headers:
+            Location: { schema: { type: string, example: /api/admin/attribute-sets/01J8ZE7Q1R } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttributeSet' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/attribute-sets/{id}:
+    get:
+      operationId: adminGetAttributeSet
+      tags: [Admin.Taxonomy]
+      summary: 属性集详情
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.read
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: 属性集
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttributeSet' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+    put:
+      operationId: adminUpdateAttributeSet
+      tags: [Admin.Taxonomy]
+      summary: 更新属性集（成员全量替换）
+      description: |
+        `members` 是**全量替换**语义（列表里没有的成员被移除），因为它表达的是"这个属性集包含哪些属性"这一个事实；
+        若按增量 patch 写，前端做删除时就得知道"当前有哪些"，反而更容易漂移。
+        注意：已挂到分类上的属性集被移除成员时，该分类继承链上的属性集合会变小 —— 已录入的商品属性值不受影响（值是独立行）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttributeSetUpsertRequest' }
+      responses:
+        '200':
+          description: 更新后的属性集
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttributeSet' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+    delete:
+      operationId: adminDeleteAttributeSet
+      tags: [Admin.Taxonomy]
+      summary: 删除属性集（软删）
+      description: 仍被分类引用时拒绝：`409 CATALOG_ATTRIBUTE_IN_USE` + `details{referencingCategoryCount}`。
+      security: [{ adminSession: [] }]
+      x-permission: perm:taxonomy.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204': { description: 已软删 }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  # ==========================================================================
+  # Admin.Catalog —— 商品
+  # ==========================================================================
+
+  /api/admin/products:
+    get:
+      operationId: adminListProducts
+      tags: [Admin.Catalog]
+      summary: 商品列表（管理端）
+      description: |
+        `sort`：`created_at_desc`（缺省）/ `total_desc`（`totalOnHand` 降序，用于"库存最多的是哪些"）/ `status`。
+        非法值 → `400 VALIDATION_FAILED`。**admin 可见库存与内部编码**（storefront 的列表 DTO 里这些字段根本不存在）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.read
+      parameters:
+        - { name: q, in: query, required: false, description: 按商品名 / 内部编码 / SKU 根模糊匹配, schema: { type: string, maxLength: 100 } }
+        - { name: status, in: query, required: false, schema: { type: string, enum: [Draft, Active, Archived] } }
+        - { name: categoryId, in: query, required: false, description: 含子分类（走 Path 前缀匹配）, schema: { type: string } }
+        - { name: sort, in: query, required: false, schema: { type: string, enum: [created_at_desc, total_desc, status], default: created_at_desc } }
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 1 } }
+        - { name: pageSize, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 24 } }
+      responses:
+        '200':
+          description: 分页商品列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminProductListResponse' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableProblem' }
+    post:
+      operationId: adminCreateProduct
+      tags: [Admin.Catalog]
+      summary: 新建商品（草稿态）
+      description: |
+        **新建即 `Draft`，不给"新建即可售"的捷径**（上架是独立动作，`POST /{id}/publish`，且要过 INV-P10 校验）。
+        INV-P02：至少 1 个分类（`categoryIds` minItems=1）。INV-P01：默认语言名称必填。
+        单个规格商品 = **一个变体**（不是零个变体）；变体由 `variants/apply` 或首个 `PUT /{id}` 之后的矩阵流程建立，
+        因此本端点不接收 `variants`，避免"建品"与"建变体"两个写入口同时存在。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductCreateRequest' }
+      responses:
+        '201':
+          description: 已创建（Draft）
+          headers:
+            Location: { schema: { type: string, example: /api/admin/products/01J8ZF9H2X } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status]
+                properties:
+                  id: { type: string }
+                  status: { type: string, enum: [Draft] }
+                  slug:
+                    type: string
+                    description: 默认语言 slug（由 names 规范化生成，后续可在 PUT 里显式改）
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/products/{id}:
+    get:
+      operationId: adminGetProduct
+      tags: [Admin.Catalog]
+      summary: 商品详情（管理端全量）
+      description: |
+        管理端可见**成本外的一切**：内部编码、内部备注、库存三件套（`onHand/reserved/sold/available`）、变体、图片、属性值、上下架时间。
+        **注意 storefront 的对应 DTO 是独立类型、无继承关系**（§5.1 类型隔离），不要指望"给 storefront 少填几个字段"：
+        那会让新增列默认被带出去。白名单投影，不是黑名单排除。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.read
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: 商品全量
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminProductDetail' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+    put:
+      operationId: adminUpdateProduct
+      tags: [Admin.Catalog]
+      summary: 更新商品基础信息
+      description: |
+        只改**基础信息**：`names/slugs/descriptionHtml/shortDescription/seo/categoryIds/attributes/internalCode/internalNote/weightGram`。
+        **不接收 `images` 与 `variants`**：图片走 `POST /{id}/images` 系列，变体走 `variants/*` 系列。
+        理由：同一事实两个写入口必然漂移（一个把主图设成 A、另一个设成 B，最后谁生效取决于谁后到）。
+        `attributes` 是全量替换（商品级属性值）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductUpdateRequest' }
+      responses:
+        '200':
+          description: 更新后的商品全量
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminProductDetail' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+    delete:
+      operationId: adminDeleteProduct
+      tags: [Admin.Catalog]
+      summary: 删除商品（软删）
+      description: |
+        **需要 `perm:catalog.delete`（员工无此权限点，破坏性操作）**。软删：行保留、`IsDeleted=1`、SKU 不复用（防串号），
+        历史订单靠快照渲染，完全不受影响。有销量的变体不会被物理删除（INV-P09）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.delete
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204': { description: 已软删 }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+
+  /api/admin/products/{id}/variants/plan:
+    post:
+      operationId: adminPlanVariants
+      tags: [Admin.Catalog]
+      summary: 预览变体矩阵（纯函数，不落库）
+      description: |
+        输入轴定义（≤3 轴，INV-P04），输出四桶计划：`toAdd`（要新建）、`toKeep`（保留）、`toDisable`（停用：不在新组合里但**有销量**，只能停用）、
+        `toDelete`（删除：不在新组合里且无销量）。
+
+        **本端点不写库**（US-E2-05「重复点击不产生重复行」的落地方式：预览 100 次也不会多出一行，
+        因为唯一的写入口是 `variants/apply`）。`warnings[]` 把"将被删除/停用的变体数"与"新变体缺价"提前告知管理员，
+        避免他点完 apply 才发现少了 12 个 SKU。
+
+        错误：`409 AXIS_LIMIT_EXCEEDED`（轴 > 3）、`409 AXIS_SCOPE_INVALID`（轴属性不是 Scope=Variant 或不是 Enum）、
+        `409 VARIANT_LIMIT_EXCEEDED`（笛卡尔积 > 100）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VariantPlanRequest' }
+      responses:
+        '200':
+          description: 变体矩阵计划（未落库）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [productId, plan]
+                properties:
+                  productId: { type: string }
+                  plan: { $ref: '#/components/schemas/VariantMatrixPlan' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/products/{id}/variants/apply:
+    post:
+      operationId: adminApplyVariants
+      tags: [Admin.Catalog]
+      summary: 应用变体矩阵（幂等）
+      description: |
+        **幂等**：同一 `plan` 重复 apply = 无变化（`changed: false`，四桶计数全 0，不写任何行、不产生审计噪音）。
+        这是 US-E2-05 的硬要求：管理员连点三下保存不能变成三倍变体。
+
+        请求二选一（`oneOf`）：传 `plan`（前端把 `variants/plan` 的返回原样提交，服务端逐项比对当前状态执行）；
+        或传 `axes`（服务端重算后直接应用，用于脚本/导入）。
+        `toDelete` 只包含**无销量且不在新组合中**的变体；有销量的进 `toDisable`（INV-P09）。
+        轴一旦生成，轴属性集合不可在线变更（INV-P12 `409 AXIS_IMMUTABLE`）—— 要换轴请先停用全部变体。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.write
+      x-csrf-required: true
+      x-idempotency:
+        key: '由请求体派生：sha256(canonical(plan))；同 key 重复提交返回 changed=false。无需客户端提供 Idempotency-Key（本操作不涉及资金）'
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VariantApplyRequest' }
+      responses:
+        '200':
+          description: 应用结果 + 最新变体列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [changed, applied, variants]
+                properties:
+                  changed: { type: boolean, description: 'false = 本次调用没有产生任何行变更（幂等重放）' }
+                  applied:
+                    type: object
+                    required: [added, kept, disabled, deleted]
+                    properties:
+                      added: { type: integer, minimum: 0 }
+                      kept: { type: integer, minimum: 0 }
+                      disabled: { type: integer, minimum: 0 }
+                      deleted: { type: integer, minimum: 0 }
+                  variants:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminVariant' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/products/{id}/variants/bulk:
+    post:
+      operationId: adminBulkUpdateVariants
+      tags: [Admin.Catalog]
+      summary: 批量改变体价格 / 库存
+      description: |
+        一次最多 200 个变体。**改库存必须带 `reason`**（US-E2-08「手工调整必填原因」），且走的不是直接改列，
+        而是 `StockItem.AdjustOnHand` + 一条不可变 `StockLedger` 流水（`ChangeType=ManualAdjust`）：
+        否则"库存为什么从 100 变 0"永远查不出来。`newOnHand < reserved + sold` → `409 INVENTORY_NEGATIVE_FORBIDDEN`。
+        改价受 INV-P03（`price.amountMinor > 0`，`compareAtPrice >= price`）与 INV-P11（币种必须等于店铺币种）约束。
+        整体单事务：**任一变体失败则全部不生效**（部分成功会让管理员无法判断"到底改了哪些"）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VariantBulkUpdateRequest' }
+      responses:
+        '204': { description: 已应用（全部成功） }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/products/{id}/variants/{variantId}:
+    patch:
+      operationId: adminPatchVariant
+      tags: [Admin.Catalog]
+      summary: 单变体：价格 / 图 / 条码 / 启停
+      description: |
+        **部分更新**：只改传了的字段，未传的不动（`PATCH` 语义）。这正是它与 `variants/apply`（矩阵级、全量）的分工。
+
+        价格是**单个 `Money` 对象**，不是数组：数据库本期是内联三列（`AmountMinor/CompareAtMinor/Currency`），
+        二期改成 `VariantPrice(VariantId, Currency)` 后对外契约仍然不变（§11 #15 的配套要求）。
+        `compareAtPrice: null` 是"清除划线价"，**不是"不改"**：要区分"不改"就别传这个键（`undefined` vs `null`）。
+        `purchasable=false` 等价于 `Variant.Status=Disabled`：不进前台可选集，但历史订单靠快照照常展示。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - { name: variantId, in: path, required: true, description: 变体标识（不透明字符串）, schema: { type: string } }
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VariantPatchRequest' }
+      responses:
+        '200':
+          description: 更新后的变体
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminVariant' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/products/{id}/publish:
+    post:
+      operationId: adminPublishProduct
+      tags: [Admin.Catalog]
+      summary: 上架
+      description: |
+        前置校验 INV-P10：≥1 个启用变体、≥1 张图、≥1 个分类且默认语言必填字段完整、每个变体至少一档价格。
+        不满足 → `409 PRODUCT_NOT_PUBLISHABLE` + `details{reasons[]}`（逐条列出缺什么，让管理员一次补齐，
+        而不是修一条报一条）。首次上架写入 `PublishedAt`（"新品"排序的依据）。
+        已 `Active` 时重复调用幂等返回 `204`。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204': { description: 已上架（`status=Active`，storefront 立即可见） }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/products/{id}/archive:
+    post:
+      operationId: adminArchiveProduct
+      tags: [Admin.Catalog]
+      summary: 下架（归档）
+      description: |
+        `Archived` 后：从 storefront 列表与 sitemap 消失，**旧商品 URL 返回 `410`**（不是 301：链接还在、
+        但内容永久没了，410 能让搜索引擎更快摘除，301 会把权重导向一个不存在的新地址）。
+        下架原因是自由文本，进审计日志。已有订单不受影响（订单渲染靠快照）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500, description: 下架原因（写审计，不对外） }
+      responses:
+        '204': { description: 已下架（`status=Archived`） }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+
+  /api/admin/products/{id}/images:
+    post:
+      operationId: adminUploadProductImage
+      tags: [Admin.Catalog]
+      summary: 上传商品图片
+      description: |
+        `multipart/form-data`。白名单 `image/jpeg|image/png|image/webp`，≤ 5 MB。
+        **先读文件头限像素、再解码**（§8.7）：一张 10 亿像素的 PNG 解压炸弹能在 2 秒内把 512MB 容器打死，
+        而它只有几百 KB。解码后统一用 ImageSharp 重编码（剥 EXIF，含 GPS）。
+        服务端派生三档 `sm/md/lg`（绝对 URL，前缀来自 `StoreSettings.PublicSiteUrl`）。
+        `isPrimary=true` 时自动把原主图降级，保证 INV-P08（有图则主图恰好一张、图数 ≤ 8）。
+        非图片/超限 → `400 VALIDATION_FAILED`（`errors.file`）；图数超 8 → `409 INV_PRIMARY_IMAGE_INVALID`。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: '≤5MB；jpg/png/webp' }
+                alt: { type: string, maxLength: 255, description: 默认语言 alt（a11y 与图片 SEO） }
+                isPrimary: { type: boolean, default: false }
+      responses:
+        '201':
+          description: 已上传并派生尺寸
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageAsset' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/products/{id}/images/order:
+    put:
+      operationId: adminReorderProductImages
+      tags: [Admin.Catalog]
+      summary: 图片排序 / 设定主图
+      description: |
+        提交全部图片的 `(mediaKey, sortOrder, isPrimary)`，服务端校验 INV-P08（`isPrimary` 恰好一张；图数 ≤ 8），
+        不满足 → `409 INV_PRIMARY_IMAGE_INVALID` + `details{primaryCount, imageCount}`。
+        **整表替换**语义：列表里缺失的 `mediaKey` 视为"未提交"而不是"删除"（删除有独立端点，避免误传导致批量丢图）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              minItems: 1
+              maxItems: 8
+              items: { $ref: '#/components/schemas/ImageOrderItem' }
+      responses:
+        '204': { description: 已应用 }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  /api/admin/products/{id}/images/{mediaKey}:
+    delete:
+      operationId: adminDeleteProductImage
+      tags: [Admin.Catalog]
+      summary: 删除商品图片
+      description: |
+        删除主图会留下"有图但无主图"的状态（违反 INV-P08）→ `409 INV_PRIMARY_IMAGE_INVALID`，
+        必须先 `PUT images/order` 把另一张设为主图。删除是"解绑 + 引用计数归零才删文件"（同一媒体可被多商品共用，去重后只存一份）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:catalog.write
+      x-csrf-required: true
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+        - { name: mediaKey, in: path, required: true, description: 媒体键（`StorageKey`，含 `/` 时需 URL 编码）, schema: { type: string, maxLength: 300 } }
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204': { description: 已删除 }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+
+  # ==========================================================================
+  # Admin.Inventory
+  # ==========================================================================
+
+  /api/admin/inventory:
+    get:
+      operationId: adminListInventory
+      tags: [Admin.Inventory]
+      summary: 库存列表
+      description: |
+        `available = onHand − reserved − sold`（**计算属性，永不落库**）。`lowStockOnly=true` 等价于 `available ≤ 5`，
+        与 storefront 的 `low_stock` 用同一个阈值，避免"前台说快没了、后台说不紧张"。
+        `total` 是真实计数；`items: []` 只在真的有 0 条匹配时返回（数据源故障是 `503`，不是空列表）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:inventory.read
+      parameters:
+        - { name: q, in: query, required: false, description: 按 SKU / 商品名模糊匹配, schema: { type: string, maxLength: 100 } }
+        - { name: lowStockOnly, in: query, required: false, schema: { type: boolean, default: false } }
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 1 } }
+        - { name: pageSize, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 24 } }
+      responses:
+        '200':
+          description: 分页库存列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InventoryListResponse' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableProblem' }
+
+  /api/admin/inventory/{variantId}/adjust:
+    post:
+      operationId: adminAdjustInventory
+      tags: [Admin.Inventory]
+      summary: 手工调整在库数量
+      description: |
+        语义是"**把 `onHand` 设成 `newOnHand`**"（盘点口径），不是增量：管理员看到货架上有 7 件就填 7，
+        不需要先算差值。差值由服务端写入流水（`delta = newOnHand − onHand`）。
+
+        `reason` **必填**（US-E2-08）：流水表是可追溯的唯一手段，一条没有原因的 `+50` 与"有人绕过 API 改库"无法区分。
+
+        约束：`newOnHand ≥ onHand_allocated`，其中 `onHand_allocated = reserved + sold`（INV-S07）。
+        违反 → `409 INVENTORY_NEGATIVE_FORBIDDEN` + `details{reserved, sold, minimumOnHand}`
+        —— 直接把"最低能填多少"告诉前端，比让管理员自己减法猜要快得多。
+        并发冲突（乐观锁重试 1 次仍失败）→ `409 STOCK_CHANGED_RETRY`（重新取数再提交）。
+      security: [{ adminSession: [] }]
+      x-permission: perm:inventory.adjust
+      x-csrf-required: true
+      parameters:
+        - { name: variantId, in: path, required: true, description: 变体标识（不透明字符串）, schema: { type: string } }
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newOnHand, reason]
+              properties:
+                newOnHand: { type: integer, minimum: 0, maximum: 1000000, description: 调整后的物理在库总数（含已售未发） }
+                reason: { type: string, minLength: 1, maxLength: 500, description: '必填。写进 StockLedger.Reason 与审计日志' }
+      responses:
+        '200':
+          description: 调整结果
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [onHand, available, movementId]
+                properties:
+                  onHand: { type: integer, minimum: 0, description: 调整后的物理在库数 }
+                  available: { type: integer, description: 'onHand − reserved − sold' }
+                  movementId: { type: string, description: 本次写下的 StockLedger 流水号（可据此在流水列表里核对该次调整） }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '409': { $ref: '#/components/responses/ConflictProblem' }
+        '429': { $ref: '#/components/responses/TooManyRequestsProblem' }
+
+  /api/admin/inventory/{variantId}/movements:
+    get:
+      operationId: adminListInventoryMovements
+      tags: [Admin.Inventory]
+      summary: 库存流水（只读）
+      description: |
+        只追加表的读出口，**没有编辑/删除端点**（`IStockLedger` 不暴露 Update/Remove，PG 下还会 `REVOKE UPDATE, DELETE`）。
+        响应走统一分页信封（`docs/03` §5.4 这一行给的是裸数组 + `page` 参数，本契约按 §5.1「分页统一」收敛为信封）。
+
+        `changeType` 让管理员看懂"这 3 件是被谁扣的"：`Reserve` 是下单预占、`Commit` 是支付成功、`Ship` 是发货离仓、
+        `RefundUncommit`/`RefundRestock` 分别对应"未发货退款只解除占用"与"已发货退款回补进可售池"。
+      security: [{ adminSession: [] }]
+      x-permission: perm:inventory.read
+      parameters:
+        - { name: variantId, in: path, required: true, description: 变体标识（不透明字符串）, schema: { type: string } }
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 1 } }
+        - { name: pageSize, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 24 } }
+      responses:
+        '200':
+          description: 分页流水列表（按时间倒序）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InventoryMovementListResponse' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '401': { $ref: '#/components/responses/UnauthorizedProblem' }
+        '403': { $ref: '#/components/responses/ForbiddenProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+
+  # ==========================================================================
+  # Storefront.Catalog —— 全部 Public
+  # ==========================================================================
+
+  /api/storefront/products:
+    get:
+      operationId: listStorefrontProducts
+      tags: [Storefront.Catalog]
+      summary: 商品列表 + facet + 可用排序
+      description: |
+        **一次请求返回 items + facets + availableSorts**（拆成两个请求会让"筛选后的 facet 计数"和"列表"来自不同快照，
+        用户会看到"选了黑色，红色显示 3 件，点进去只有 1 件"）。
+
+        facet 计数是**析取式**：`facets[i].values[j].count` = 在"应用了除 `f[i]` 之外所有其它筛选"之后该值还能命中多少商品。
+        包含式计数会让"选了 A 之后其它 A 值全显示 0"，用户以为无货。实现上 n 个维度要 n 次 `GROUP BY`
+        （n ≤ 8，最多 9 次，走覆盖索引），**不得"优化"成一次**——那是本行业最常见的 facet bug。
+        `count = 0` 的值后端过滤，不返回。
+
+        `StockStatus` 判据：`available ≤ 0` → `out_of_stock`；`1..5` → `low_stock`；`> 5` → `in_stock`。
+        `availableQuantity` 只在 `low_stock` 时给真实值，否则 `null`（"充足，不必关心精确数"；给 99 封顶是假信息，已废止）。
+      security: []
+      x-permission: null
+      parameters:
+        - { name: locale, in: query, required: false, schema: { type: string, enum: [zh, en], default: zh } }
+        - { name: categorySlug, in: query, required: false, schema: { type: string } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 100 } }
+        - name: f
+          in: query
+          required: false
+          description: '属性筛选，格式 attrCode:optionCode，可重复（例：?f=color:black&f=size:m）'
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string, pattern: '^[a-z][a-zA-Z0-9]{1,39}:[A-Za-z0-9_-]{1,40}$' }
+        - { name: priceMinMinor, in: query, required: false, schema: { type: integer, minimum: 0, description: '最小货币单位（整数分）' } }
+        - { name: priceMaxMinor, in: query, required: false, schema: { type: integer, minimum: 0 } }
+        - name: sort
+          in: query
+          required: false
+          schema: { type: string, enum: [newest, price_asc, price_desc], default: newest }
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 1 } }
+        - { name: pageSize, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 24 } }
+      responses:
+        '200':
+          description: 分页商品列表（一次请求带 items + facets + availableSorts）
+          headers:
+            Cache-Control: { schema: { type: string, example: 'public, max-age=60' } }
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, facets, availableSorts, hasActiveFilters, page, pageSize, total, pageCount]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, slug, name, primaryImage, price, stockStatus, maxOrderQuantity]
+                      properties:
+                        id: { type: string }
+                        slug: { type: string }
+                        name: { type: string }
+                        primaryImage:
+                          type: object
+                          required: [url, alt, width, height, sources]
+                          properties:
+                            url: { type: string, description: '绝对 URL' }
+                            alt: { type: string }
+                            width: { type: integer }
+                            height: { type: integer }
+                            sources:
+                              type: object
+                              description: '三档响应式源，全为绝对 URL'
+                              required: [sm, md, lg]
+                              properties:
+                                sm: { $ref: '#/components/schemas/ImageSource' }
+                                md: { $ref: '#/components/schemas/ImageSource' }
+                                lg: { $ref: '#/components/schemas/ImageSource' }
+                        price: { $ref: '#/components/schemas/Money' }
+                        compareAtPrice:
+                          allOf:
+                            - $ref: '#/components/schemas/Money'
+                          nullable: true
+                        stockStatus: { type: string, enum: [in_stock, low_stock, out_of_stock] }
+                        availableQuantity:
+                          type: integer
+                          nullable: true
+                          maximum: 5
+                          description: '仅 stockStatus=low_stock（available ≤ 5）时给真实值，否则 null'
+                        maxOrderQuantity: { type: integer, minimum: 0, maximum: 99 }
+                        badges:
+                          type: array
+                          items: { type: string, enum: [new, sale, soldOut] }
+                  facets:
+                    type: array
+                    description: 'filterable 属性；count 为**析取式**（剔除本维度条件后计算）；count=0 的值不返回'
+                    items:
+                      type: object
+                      required: [code, label, type]
+                      properties:
+                        code: { type: string }
+                        label: { type: string }
+                        type: { type: string, enum: [enum, range] }
+                        values:
+                          type: array
+                          items:
+                            type: object
+                            required: [code, label, count]
+                            properties:
+                              code: { type: string }
+                              label: { type: string }
+                              count: { type: integer, minimum: 1 }
+                        range:
+                          type: object
+                          properties:
+                            minMinor: { type: integer }
+                            maxMinor: { type: integer }
+                            unit: { type: string, nullable: true }
+                  availableSorts:
+                    type: array
+                    description: '本分类下有数据的排序方式；newest 恒在'
+                    items: { type: string, enum: [newest, price_asc, price_desc] }
+                  hasActiveFilters: { type: boolean, description: '供前端决定是否显示"清除筛选"与 canonical 策略' }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+                  total: { type: integer, description: '真实计数；0 才能渲染空态' }
+                  pageCount: { type: integer }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '429': { $ref: '#/components/responses/TooManyRequestsProblem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableProblem' }
+
+  /api/storefront/products/{slug}:
+    get:
+      operationId: getStorefrontProductBySlug
+      tags: [Storefront.Catalog]
+      summary: 商品详情 + 变体矩阵
+      description: |
+        三条必须在契约里写死的规则：
+
+        1. **变体没有 `name`**：变体名 = 选项组合，前端自己拼（`key` + `options[]` 已经够用）。给变体起名会让"改名"变成
+           一件要同步 100 个变体的事，而且和选项一旦不一致，前台就出现"黑色 / 尺码 M"配着"黑色L"的名字。
+        2. **`purchasable` 而不是 `enabled`**：`enabled=false`（商家停用）与售罄（available=0）对买家是同一件事——置灰不可选。
+           两个字段让前端在每个渲染点都要写一遍 `a || b`，必有一处漏。
+        3. **`sku` 只在详情页返回**：列表页批量给 SKU 等于把内部编码喂给爬虫与竞品。
+
+        页级无译文（该 locale 没有该商品的 slug/译文行）→ **`404`**，不是回退：`/en/p/中文slug` 若返回 200 + 中文内容，
+        会产生"英文 URL 装中文页面"的可索引重复页，AC-14 直接红。字段级缺译文 → 回退默认语言 + `translatedIn` 不含该字段。
+        已归档 → **`410 CATALOG_PRODUCT_GONE`**（内容永久没了，让搜索引擎更快摘除；301 会把权重导向不存在的地址）。
+      security: []
+      x-permission: null
+      parameters:
+        - { name: slug, in: path, required: true, description: 该 locale 下的商品 slug, schema: { type: string, pattern: '^[a-z0-9]+(-[a-z0-9]+)*$', maxLength: 200 } }
+        - { name: locale, in: query, required: false, schema: { type: string, enum: [zh, en], default: zh } }
+      responses:
+        '200':
+          description: 商品详情
+          headers:
+            Cache-Control: { schema: { type: string, example: 'public, max-age=60' } }
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorefrontProductDetail' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '404': { $ref: '#/components/responses/NotFoundProblem' }
+        '410': { $ref: '#/components/responses/GoneProblem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableProblem' }
+
+  /api/storefront/categories:
+    get:
+      operationId: listStorefrontCategories
+      tags: [Storefront.Catalog]
+      summary: 分类树（前台导航）
+      description: |
+        返回 `Status=Active` 的分类树（`Hidden` 不进前台，但仍可被直接 URL 访问——"不显示在导航"与"不可访问"是两件事）。
+        缓存 60 分钟 + 分类版本号（变更即 bump，不做"等它自己过期"）。
+      security: []
+      x-permission: null
+      parameters:
+        - { name: locale, in: query, required: false, schema: { type: string, enum: [zh, en], default: zh } }
+      responses:
+        '200':
+          description: 分类树（`children` 递归）
+          headers:
+            Cache-Control: { schema: { type: string, example: 'public, max-age=3600' } }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/StorefrontCategoryNode' }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableProblem' }
+
+  /api/storefront/bootstrap:
+    get:
+      operationId: getStorefrontBootstrap
+      tags: [Storefront.Catalog]
+      summary: SSR 首屏站点上下文（一次请求）
+      description: |
+        服务端渲染首屏需要的一切：店铺信息 + 主题 + 导航 + 购物车摘要。**一个往返**——SSR 每多一个串行请求，
+        TTFB 就多一次 RTT，而首屏 TTFB 直接决定 LCP。
+
+        `canSell=false` 时前端禁用"去结算"并显示中性原因；但**服务端仍必须二次拦截**（`/checkout/confirm` 的第一条语句断言它）：
+        前端禁用只是 UX，改 JS 就绕过了。
+
+        `store.canSellReason` 与 `503 CANNOT_SELL` 的 `details.reason` 是**同一套枚举** `{noCredentials, testFailed, channelDisabled}`，
+        `ok` 永不出现（两套词表并存时，前端的映射表必漏一个）。
+        带 `ETag`：SSR 可用 `If-None-Match` 拿 `304`，省掉序列化与传输。
+      security: []
+      x-permission: null
+      parameters:
+        - { name: locale, in: query, required: false, schema: { type: string, enum: [zh, en], default: zh } }
+        - name: If-None-Match
+          in: header
+          required: false
+          description: 上一轮的 `ETag`；命中返回 `304`（无 body）
+          schema: { type: string }
+      responses:
+        '200':
+          description: 站点上下文
+          headers:
+            ETag: { schema: { type: string } }
+            Cache-Control: { schema: { type: string, example: 'private, no-cache' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorefrontBootstrap' }
+        '304': { description: 未变更（`If-None-Match` 命中） }
+        '400': { $ref: '#/components/responses/ValidationProblem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableProblem' }
+
+  # ==========================================================================
+  # Health
+  # ==========================================================================
+
+  /health/live:
+    get:
+      operationId: healthLive
+      tags: [Health]
+      summary: 存活探针（不查 DB）
+      description: |
+        **只证明"进程还能响应"**，不碰数据库。理由：健康检查去 ping 数据库，数据库一抖动就会让编排把所有实例摘掉，
+        把一次 DB 慢查询放大成一次全站 502。仅内网可访问（反代层限制）。
+      security: []
+      x-permission: null
+      responses:
+        '200':
+          description: 进程存活
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [live] }
+
+  /health/ready:
+    get:
+      operationId: healthReady
+      tags: [Health]
+      summary: 就绪探针（查 DB / 迁移 / 媒体目录 / 模板目录）
+      description: |
+        **不检查"是否已完成安装"**：新部署未初始化也是 ready（否则首次部署永远起不来，向导页都打不开）。
+        任一检查失败 → `503` + 明细（注意：是 `503`，不是 `200` + 空对象；反代的可用性告警要靠这个状态码才会响）。
+      security: []
+      x-permission: null
+      responses:
+        '200':
+          description: 全部就绪
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthReadyResponse' }
+        '503':
+          description: 至少一项未就绪
+          headers:
+            Retry-After: { schema: { type: integer, example: 30 } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthReadyResponse' }
+
+# ============================================================================
+components:
+
+  securitySchemes:
+    adminSession:
+      type: apiKey
+      in: cookie
+      name: os_admin_sid
+      description: |
+        管理端会话 Cookie（32 字节随机 base64url，`HttpOnly; Secure; SameSite=Lax; Path=/api/admin`）。
+        服务端只存 `SHA-256(token)` 作主键，DB 泄露不等于会话可被劫持。
+        校验顺序：① TokenHash 命中 ② `RevokedAt is null` ③ 未过绝对过期 ④ 未过空闲过期 ⑤ `AdminUser.Status=Active` 且 `SecurityStamp` 未变。
+        第 ⑤ 步让"改密/停用即踢下线"无需遍历会话。
+
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      description: 资源标识（**不透明字符串**：数据模型是 `long`、现有代码是 `Guid`、文档示例是 ULID 形态，本契约只承诺"字符串"，不承诺格式）
+      schema: { type: string, minLength: 1, maxLength: 40 }
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: |
+        double-submit 校验：值取自**非 HttpOnly** Cookie `os_admin_csrf`。中间件顺序不能错：
+        ① 会话有效 → ② `Origin` 是本站（缺失即拒）→ ③ `SHA256(header) == Session.CsrfHash`（常量时间比较）。
+        任一不过 → `403 AUTH_CSRF_INVALID`。**不豁免任何写方法**，包括登录后的第一次写。
+      schema: { type: string, minLength: 32, maxLength: 128 }
+    Locale:
+      name: locale
+      in: query
+      required: false
+      description: 内容语言；缺省用 `StoreSettings.DefaultLocale`。非法值 → `400 LOCALE_NOT_ENABLED`
+      schema: { type: string, enum: [zh, en], default: zh }
+    Page:
+      name: page
+      in: query
+      required: false
+      description: '页码；上限 100。超上限 → `400 PAGE_OUT_OF_RANGE`；超过总页数（但 ≤100）→ `200 + items: []`'
+      schema: { type: integer, minimum: 1, maximum: 100, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      description: 每页条数；默认 24、上限 100。超限 → `400 PAGE_SIZE_EXCEEDED`
+      schema: { type: integer, minimum: 1, maximum: 100, default: 24 }
+
+  schemas:
+
+    # ---------------------------------------------------------------- 基础值对象
+
+    Money:
+      type: object
+      required: [amountMinor, currency]
+      description: |
+        **全项目唯一金额类型**。`amountMinor` 是最小货币单位的整数（分）。禁止小数、禁止字符串、禁止旧字段名 `amount`。
+        二期加多币种时**不变成数组**：DTO 永远只暴露"当前 locale/店铺币种的这一个价"（§11 #15）。
+      additionalProperties: false
+      properties:
+        amountMinor: { type: integer, example: 29900, description: '最小货币单位整数（CNY 的分）' }
+        currency: { type: string, pattern: '^[A-Z]{3}$', example: CNY }
+
+    ImageSource:
+      type: object
+      required: [url, width, height]
+      description: 响应式图片源（绝对 URL）
+      properties:
+        url: { type: string, description: '绝对 URL（由 StoreSettings.PublicSiteUrl 拼出，不读 Host 头）' }
+        width: { type: integer }
+        height: { type: integer }
+
+    ImageAsset:
+      type: object
+      required: [mediaKey, url, width, height, sources]
+      description: 已入库的媒体资源（管理端上传返回与商品详情里的图片项）
+      properties:
+        mediaKey: { type: string, description: '存储键 `yyyy/MM/{sha256前16}`，无扩展名；派生尺寸按约定生成' }
+        url: { type: string, description: 原图绝对 URL }
+        width: { type: integer }
+        height: { type: integer }
+        alt: { type: string, nullable: true, description: 默认语言 alt }
+        isPrimary: { type: boolean, description: '是否商品主图（INV-P08：有图则恰好一张）' }
+        sortOrder: { type: integer }
+        sources:
+          type: object
+          required: [sm, md, lg]
+          properties:
+            sm: { $ref: '#/components/schemas/ImageSource' }
+            md: { $ref: '#/components/schemas/ImageSource' }
+            lg: { $ref: '#/components/schemas/ImageSource' }
+
+    LocalizedText:
+      type: object
+      description: |
+        多语言文本，键是契约 locale 代码（`zh`/`en`）。**缺键 = 未译**（不是空字符串：空串会被当成"有译文但为空"，
+        导致回退逻辑失效）。管理端写入时未提供的键表示"不修改/未译"，读取时缺失的键由前端回退默认语言。
+      additionalProperties: false
+      properties:
+        zh: { type: string, maxLength: 4000 }
+        en: { type: string, maxLength: 4000 }
+
+    LocalizedSlug:
+      type: object
+      description: 每语言 slug（小写 + 连字符）。`(locale, slug)` 在该实体类型内全局唯一；缺失的键由服务端按对应语言名称规范化生成。
+      additionalProperties: false
+      properties:
+        zh: { type: string, pattern: '^[a-z0-9]+(-[a-z0-9]+)*$', maxLength: 200 }
+        en: { type: string, pattern: '^[a-z0-9]+(-[a-z0-9]+)*$', maxLength: 200 }
+
+    PageMeta:
+      type: object
+      required: [page, pageSize, total, pageCount]
+      description: 分页信封的四件套（每个分页响应都带，字段名固定）
+      properties:
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1 }
+        total: { type: integer, minimum: 0, description: '真实计数；0 才允许渲染空态' }
+        pageCount: { type: integer, minimum: 0, description: '总页数（**不是 totalPages**）' }
+
+    PermissionCode:
+      type: string
+      description: |
+        权限点（`docs/03` §6.4 矩阵，Admin/Staff 两列）。角色 → 权限点是**代码内静态常量**，不建表。
+        前端隐藏菜单只是 UX；**服务端 403 才是唯一权威**。
+      enum:
+        - perm:catalog.read
+        - perm:catalog.write
+        - perm:catalog.delete
+        - perm:taxonomy.read
+        - perm:taxonomy.write
+        - perm:inventory.read
+        - perm:inventory.adjust
+        - perm:order.read
+        - perm:order.fulfill
+        - perm:order.cancel.unpaid
+        - perm:order.cancel.paid
+        - perm:refund.read
+        - perm:refund.write
+        - perm:return.read
+        - perm:return.review
+        - perm:customer.read
+        - perm:theme.read
+        - perm:theme.write
+        - perm:localization.write
+        - perm:settings.write
+        - perm:payment.configure
+        - perm:shipping.configure
+        - perm:audit.read
+        - perm:adminuser.write
+        - perm:backup.export
+        - perm:dashboard.read
+
+    # ---------------------------------------------------------------- 认证
+
+    AdminRole:
+      type: string
+      enum: [Admin, Staff]
+      description: 只两种角色（不提供自定义角色）。`Staff` 无任何资金/破坏性权限点
+
+    AdminStatus:
+      type: string
+      enum: [Active, Suspended]
+
+    AdminIdentity:
+      type: object
+      required: [id, email, role, permissions]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        displayName: { type: string, nullable: true }
+        role: { $ref: '#/components/schemas/AdminRole' }
+        permissions:
+          type: array
+          description: 该角色的全部权限点（Staff 只含矩阵里打勾的那些）
+          items: { $ref: '#/components/schemas/PermissionCode' }
+
+    # ---------------------------------------------------------------- 分类
+
+    CategoryStatus:
+      type: string
+      enum: [Active, Hidden]
+      description: Hidden = 不进前台导航，但直接 URL 仍可访问（"不显示"≠"不可访问"）
+
+    AdminCategory:
+      type: object
+      required: [id, parentId, depth, sortOrder, status, names, slugs, childCount, productCount, version]
+      properties:
+        id: { type: string }
+        parentId: { type: string, nullable: true, description: 'null = 一级分类' }
+        depth: { type: integer, minimum: 0, maximum: 5 }
+        sortOrder: { type: integer, description: 同层内唯一（INV-C03） }
+        status: { $ref: '#/components/schemas/CategoryStatus' }
+        names: { $ref: '#/components/schemas/LocalizedText' }
+        slugs: { $ref: '#/components/schemas/LocalizedSlug' }
+        attributeSetId: { type: string, nullable: true, description: 'null = 继承父链的属性集' }
+        childCount: { type: integer, minimum: 0, description: 直接子分类数（删除拦截提示用） }
+        productCount: { type: integer, minimum: 0, description: 本分类直属商品数（删除拦截提示用） }
+        version: { type: integer, minimum: 1, description: '乐观锁令牌；随 PUT 回传，不匹配 → 409 CONCURRENT_UPDATE' }
+        updatedAt: { type: string, format: date-time }
+        children:
+          type: array
+          description: 子节点（仅 `GET /api/admin/categories` 返回树时内联；单节点查询为空数组）
+          items: { $ref: '#/components/schemas/AdminCategory' }
+
+    CategoryUpsertRequest:
+      type: object
+      required: [names]
+      properties:
+        parentId: { type: string, nullable: true, description: 'null = 一级分类。移动会校验无环（INV-C01）与深度 ≤5（INV-C02）' }
+        sortOrder: { type: integer, minimum: 0, description: '缺省追加到同级末尾' }
+        names:
+          allOf:
+            - $ref: '#/components/schemas/LocalizedText'
+          description: 默认语言（zh）必填；`en` 缺键 = 该语言未译（前台回退默认语言）
+        slugs:
+          allOf:
+            - $ref: '#/components/schemas/LocalizedSlug'
+          description: 缺省按对应语言 names 规范化生成；变更写 SlugHistory → 旧 URL 301
+        attributeSetId: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/CategoryStatus' }
+        version: { type: integer, minimum: 1, description: '可选：带上即做乐观锁，不匹配 → 409 CONCURRENT_UPDATE' }
+
+    CategorySortItem:
+      type: object
+      required: [id, parentId, sortOrder]
+      properties:
+        id: { type: string }
+        parentId: { type: string, nullable: true }
+        sortOrder: { type: integer, minimum: 0 }
+
+    # ---------------------------------------------------------------- 属性 / 属性集
+
+    AttributeDataType:
+      type: string
+      enum: [Text, MultilineText, Enum, MultiEnum, Number, Bool]
+
+    AttributeScope:
+      type: string
+      enum: [Product, Variant]
+      description: 'Variant 用于变体轴；`scope=Variant` 时只允许 `dataType=Enum`（INV-A04，否则矩阵无法枚举）'
+
+    AttributeOption:
+      type: object
+      required: [id, code, labels, sortOrder, isActive]
+      properties:
+        id: { type: string }
+        code: { type: string, pattern: '^[A-Za-z0-9_-]{1,40}$' }
+        labels: { $ref: '#/components/schemas/LocalizedText' }
+        colorHex: { type: string, nullable: true, pattern: '^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$', description: 色板型选项给主题用 }
+        sortOrder: { type: integer }
+        isActive: { type: boolean, description: 'false = 已废弃但仍被历史数据引用（不删行，避免孤儿 OptionId）' }
+
+    AttributeDefinition:
+      type: object
+      required: [id, code, dataType, scope, filterable, sortOrder, isActive, names, usageCount, version]
+      properties:
+        id: { type: string }
+        code: { type: string, pattern: '^[a-z][a-zA-Z0-9]{1,39}$', description: '全局唯一（INV-A01）。模板与筛选参数都用它引用' }
+        dataType: { $ref: '#/components/schemas/AttributeDataType' }
+        scope: { $ref: '#/components/schemas/AttributeScope' }
+        filterable: { type: boolean, description: '能否进 facet 与列表筛选；只有 true 的属性进 facets' }
+        unit:
+          type: string
+          nullable: true
+          maxLength: 16
+          description: '单位符号（mm/g），只做展示，不做换算'
+        groupId: { type: string, nullable: true, description: 属性分组（仅管理端展示，不翻译） }
+        sortOrder: { type: integer }
+        isActive: { type: boolean }
+        names:
+          allOf:
+            - $ref: '#/components/schemas/LocalizedText'
+          description: 筛选器标题就是它，**必须翻译**
+        helpTexts:
+          allOf:
+            - $ref: '#/components/schemas/LocalizedText'
+          description: 录入提示文案（可选）
+        usageCount: { type: integer, minimum: 0, description: '被多少个商品引用；>0 时 dataType/scope 不可改、不可删（INV-A03）' }
+        options:
+          type: array
+          description: 'Enum/MultiEnum 必填 ≥1 项（INV-A05）'
+          items: { $ref: '#/components/schemas/AttributeOption' }
+        version: { type: integer, minimum: 1 }
+        updatedAt: { type: string, format: date-time }
+
+    AttributeOptionUpsert:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string, pattern: '^[A-Za-z0-9_-]{1,40}$' }
+        labels: { $ref: '#/components/schemas/LocalizedText' }
+        colorHex: { type: string, nullable: true }
+        sortOrder: { type: integer, minimum: 0 }
+        isActive: { type: boolean, default: true }
+
+    AttributeUpsertRequest:
+      type: object
+      required: [code, dataType, scope, names]
+      properties:
+        code: { type: string, pattern: '^[a-z][a-zA-Z0-9]{1,39}$', description: '全局唯一；重复 → 409 CATALOG_CODE_DUPLICATE' }
+        dataType: { $ref: '#/components/schemas/AttributeDataType' }
+        scope: { $ref: '#/components/schemas/AttributeScope' }
+        filterable: { type: boolean, default: false }
+        unit: { type: string, nullable: true, maxLength: 16 }
+        groupId: { type: string, nullable: true }
+        sortOrder: { type: integer, minimum: 0 }
+        isActive: { type: boolean, default: true }
+        names: { $ref: '#/components/schemas/LocalizedText' }
+        helpTexts: { $ref: '#/components/schemas/LocalizedText' }
+        options:
+          type: array
+          description: '按 code upsert：列表里没有的旧项被置 isActive=false（不删除）'
+          items: { $ref: '#/components/schemas/AttributeOptionUpsert' }
+        version: { type: integer, minimum: 1 }
+
+    AttributeSetMember:
+      type: object
+      required: [attributeDefinitionId, code, isRequired, sortOrder]
+      properties:
+        attributeDefinitionId: { type: string }
+        code: { type: string, description: 属性 code（冗余返回，便于前端渲染无需二次查表） }
+        isRequired: { type: boolean, description: '必填挂在成员上：同一属性在不同分类可必填/选填' }
+        sortOrder: { type: integer }
+
+    AttributeSet:
+      type: object
+      required: [id, code, sortOrder, members, version]
+      properties:
+        id: { type: string }
+        code: { type: string, pattern: '^[a-z][a-zA-Z0-9]{1,39}$', description: '唯一（INV-AS01）；名称仅管理端，不建翻译表' }
+        sortOrder: { type: integer }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/AttributeSetMember' }
+        version: { type: integer, minimum: 1 }
+        updatedAt: { type: string, format: date-time }
+
+    AttributeSetUpsertRequest:
+      type: object
+      required: [code, members]
+      properties:
+        code: { type: string, pattern: '^[a-z][a-zA-Z0-9]{1,39}$' }
+        sortOrder: { type: integer, minimum: 0 }
+        members:
+          type: array
+          description: '全量替换语义；Scope=Variant 成员 ≤3（INV-AS03 → 409 AXIS_LIMIT_EXCEEDED）'
+          items:
+            type: object
+            required: [attributeDefinitionId, isRequired]
+            properties:
+              attributeDefinitionId: { type: string }
+              isRequired: { type: boolean, default: false }
+              sortOrder: { type: integer, minimum: 0 }
+        version: { type: integer, minimum: 1 }
+
+    # ---------------------------------------------------------------- 商品（管理端）
+
+    ProductStatus:
+      type: string
+      enum: [Draft, Active, Archived]
+      description: '与 `src/OpenStore.Domain/Catalog/ProductStatus.cs` 逐字一致。Archived → storefront 410；Draft → 404'
+
+    ProductAttributeValue:
+      type: object
+      required: [attributeCode]
+      description: 商品级属性值（四列互斥。**恰好一列有值**：optionIds / numberValue / textValue / boolValue）
+      properties:
+        attributeCode: { type: string }
+        optionIds:
+          type: array
+          description: 'Enum=1 项；MultiEnum=N 项'
+          items: { type: string }
+        textValue: { type: string, nullable: true, maxLength: 1000 }
+        numberValue: { type: number, nullable: true, format: double }
+        boolValue: { type: boolean, nullable: true }
+        unit: { type: string, nullable: true, description: 只读回显（来自属性定义的 unit） }
+
+    VariantOption:
+      type: object
+      required: [attributeCode, optionCode]
+      description: 轴上的一个取值（`attributeCode` 对应 `AttributeDefinition.Code`，`optionCode` 对应 `AttributeOption.Code`）
+      properties:
+        attributeCode: { type: string }
+        optionCode: { type: string }
+
+    AdminVariant:
+      type: object
+      required: [id, sku, axisSignature, options, price, purchasable, stock, version]
+      description: 管理端变体（**含库存三件套**，storefront 的变体 DTO 里没有这些字段）
+      properties:
+        id: { type: string }
+        sku: { type: string, pattern: '^[A-Z0-9][A-Z0-9-]{0,63}$', description: '全局唯一（不过滤软删，防复用串号）' }
+        axisSignature:
+          type: string
+          description: '规范化轴签名，形如 `color=black|size=m`（按 key 排序、小写）。它是 `(ProductId, AxisSignature)` 唯一索引的落点'
+        options:
+          type: array
+          items: { $ref: '#/components/schemas/VariantOption' }
+        price: { $ref: '#/components/schemas/Money' }
+        compareAtPrice:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          nullable: true
+        purchasable: { type: boolean, description: '等价于 Variant.Status=Enabled；false 不进前台可选集，历史订单不受影响' }
+        barcode: { type: string, nullable: true, maxLength: 64 }
+        imageMediaKey: { type: string, nullable: true, description: 'null = 回退商品主图' }
+        imageUrl: { type: string, nullable: true, description: 绝对 URL（回退后的实际展示图） }
+        weightGram: { type: integer, nullable: true, description: 'null = 回退商品级重量' }
+        stock:
+          type: object
+          required: [onHand, reserved, sold, available]
+          description: '管理端可见。`available = onHand − reserved − sold`（永不落库）'
+          properties:
+            onHand: { type: integer, minimum: 0 }
+            reserved: { type: integer, minimum: 0 }
+            sold: { type: integer, minimum: 0 }
+            available: { type: integer }
+        version: { type: integer, minimum: 1 }
+        updatedAt: { type: string, format: date-time }
+
+    AdminProductListItem:
+      type: object
+      required: [id, skuRoot, name, status, variantCount, totalOnHand, updatedAt]
+      properties:
+        id: { type: string }
+        skuRoot: { type: string, description: 'SKU 根（变体 SKU 的前缀），创建商品时给定' }
+        name: { type: string, description: 默认语言名（回退后的展示名） }
+        status: { $ref: '#/components/schemas/ProductStatus' }
+        variantCount: { type: integer, minimum: 0 }
+        totalOnHand: { type: integer, minimum: 0, description: 全部变体 `onHand` 之和（**仅 admin**） }
+        updatedAt: { type: string, format: date-time }
+
+    AdminProductListResponse:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/AdminProductListItem' }
+
+    ProductCreateRequest:
+      type: object
+      required: [skuRoot, names, categoryIds]
+      properties:
+        skuRoot:
+          type: string
+          pattern: '^[A-Z0-9][A-Z0-9-]{0,31}$'
+          description: 'SKU 根；变体 SKU = `{skuRoot}-{轴值缩写}`，全局唯一'
+        names: { $ref: '#/components/schemas/LocalizedText' }
+        slugs:
+          allOf:
+            - $ref: '#/components/schemas/LocalizedSlug'
+          description: 缺省按 names 规范化生成
+        descriptionHtml: { type: string, nullable: true, description: '富文本，入库前 sanitize（剥离 <style>/style 属性/事件属性）' }
+        shortDescription: { $ref: '#/components/schemas/LocalizedText' }
+        categoryIds:
+          type: array
+          minItems: 1
+          maxItems: 20
+          description: '≥1（INV-P02）；分类必须是已存在的非删除分类'
+          items: { type: string }
+        attributes:
+          type: array
+          items: { $ref: '#/components/schemas/ProductAttributeValue' }
+        seo:
+          type: object
+          properties:
+            title: { $ref: '#/components/schemas/LocalizedText' }
+            description: { $ref: '#/components/schemas/LocalizedText' }
+        weightGram: { type: integer, nullable: true, minimum: 0, maximum: 1000000 }
+        internalCode: { type: string, nullable: true, maxLength: 64, description: 商家内部编码，不对外、不翻译 }
+
+    ProductUpdateRequest:
+      type: object
+      description: 全量更新基础信息（**不含 images / variants**：那两个有独立写入口，避免同一事实两个来源）
+      required: [names, categoryIds]
+      properties:
+        names: { $ref: '#/components/schemas/LocalizedText' }
+        slugs: { $ref: '#/components/schemas/LocalizedSlug' }
+        descriptionHtml: { type: string, nullable: true }
+        shortDescription: { $ref: '#/components/schemas/LocalizedText' }
+        categoryIds:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { type: string }
+        attributes:
+          type: array
+          description: 商品级属性值**全量替换**
+          items: { $ref: '#/components/schemas/ProductAttributeValue' }
+        seo:
+          type: object
+          properties:
+            title: { $ref: '#/components/schemas/LocalizedText' }
+            description: { $ref: '#/components/schemas/LocalizedText' }
+        weightGram: { type: integer, nullable: true, minimum: 0, maximum: 1000000 }
+        internalCode: { type: string, nullable: true, maxLength: 64 }
+        internalNote: { type: string, nullable: true, maxLength: 2000, description: 内部备注（**永不进 storefront DTO**） }
+        version: { type: integer, minimum: 1, description: '可选：带上即乐观锁（不匹配 → 409 CONCURRENT_UPDATE）' }
+
+    AdminProductDetail:
+      type: object
+      required: [id, skuRoot, status, names, slugs, categories, images, variants, axes, version, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        skuRoot: { type: string }
+        status: { $ref: '#/components/schemas/ProductStatus' }
+        publishedAt: { type: string, nullable: true, format: date-time, description: 首次上架时间（"新品"排序依据） }
+        names: { $ref: '#/components/schemas/LocalizedText' }
+        slugs: { $ref: '#/components/schemas/LocalizedSlug' }
+        descriptionHtml: { type: string, nullable: true }
+        shortDescription: { $ref: '#/components/schemas/LocalizedText' }
+        seo:
+          type: object
+          properties:
+            title: { $ref: '#/components/schemas/LocalizedText' }
+            description: { $ref: '#/components/schemas/LocalizedText' }
+        internalCode: { type: string, nullable: true }
+        internalNote: { type: string, nullable: true }
+        weightGram: { type: integer, nullable: true }
+        categories:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              slug: { type: string, nullable: true }
+        axes:
+          type: array
+          description: 已生成的变体轴（≤3）。轴属性集合一旦生成不可在线变更（INV-P12 → 409 AXIS_IMMUTABLE）
+          items:
+            type: object
+            required: [attributeCode, sortOrder]
+            properties:
+              attributeCode: { type: string }
+              sortOrder: { type: integer }
+        attributes:
+          type: array
+          items: { $ref: '#/components/schemas/ProductAttributeValue' }
+        images:
+          type: array
+          items: { $ref: '#/components/schemas/ImageAsset' }
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/AdminVariant' }
+        version: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    # ---------------------------------------------------------------- 变体矩阵
+
+    VariantAxisInput:
+      type: object
+      required: [attributeCode, optionCodes]
+      properties:
+        attributeCode: { type: string, pattern: '^[a-z][a-zA-Z0-9]{1,39}$', description: '必须是 Scope=Variant 且 DataType=Enum 的属性（否则 409 AXIS_SCOPE_INVALID）' }
+        optionCodes:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { type: string, pattern: '^[A-Za-z0-9_-]{1,40}$' }
+
+    VariantPlanRequest:
+      type: object
+      required: [axes]
+      properties:
+        axes:
+          type: array
+          maxItems: 3
+          description: '≤3 轴（INV-P04，超出 → 409 AXIS_LIMIT_EXCEEDED）。空数组 = 收起成单规格商品'
+          items: { $ref: '#/components/schemas/VariantAxisInput' }
+
+    VariantPlanItem:
+      type: object
+      required: [axisSignature, options]
+      properties:
+        variantId: { type: string, nullable: true, description: '`toAdd` 里为 null（还不存在）' }
+        sku: { type: string, nullable: true, description: '`toAdd` 里是**推导出的建议 SKU**（由 skuRoot + 轴值生成），落库前可改' }
+        axisSignature: { type: string, example: 'color=black|size=m' }
+        options:
+          type: array
+          items: { $ref: '#/components/schemas/VariantOption' }
+        purchasable: { type: boolean, description: '当前是否启用（`toAdd` 里无意义，可忽略）' }
+        hasSales: { type: boolean, description: '是否有销量：决定"不在新组合里"的变体是进 `toDisable` 还是 `toDelete`（INV-P09）' }
+
+    VariantPlanWarning:
+      type: object
+      required: [code, message]
+      description: 让管理员在点 apply 之前就知道代价（"将删除 12 个 SKU"、"这些新变体还没价格，上架会被拦"）
+      properties:
+        code:
+          type: string
+          enum: [variantsToBeDeleted, variantsToBeDisabledWithSales, newVariantsWithoutPrice, skuDerivationCollision, axesCollapsedToSingleSpec]
+        message: { type: string, description: 中文可读说明（含数量与示例 SKU） }
+        axisSignature: { type: string, nullable: true }
+
+    VariantMatrixPlan:
+      type: object
+      required: [toAdd, toKeep, toDisable, toDelete, warnings, summary]
+      description: |
+        四桶计划。`toDelete` **只包含"不在新组合中且无销量"的变体**；有销量的一律进 `toDisable`（INV-P09：
+        已产生销量的变体不可删除，只能停用，否则历史订单会指向一个不存在的实体）。
+      properties:
+        toAdd:
+          type: array
+          items: { $ref: '#/components/schemas/VariantPlanItem' }
+        toKeep:
+          type: array
+          items: { $ref: '#/components/schemas/VariantPlanItem' }
+        toDisable:
+          type: array
+          items: { $ref: '#/components/schemas/VariantPlanItem' }
+        toDelete:
+          type: array
+          items: { $ref: '#/components/schemas/VariantPlanItem' }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/VariantPlanWarning' }
+        summary:
+          type: object
+          required: [add, keep, disable, delete]
+          properties:
+            add: { type: integer, minimum: 0 }
+            keep: { type: integer, minimum: 0 }
+            disable: { type: integer, minimum: 0 }
+            delete: { type: integer, minimum: 0 }
+
+    VariantApplyRequest:
+      description: 二选一：提交 `plan`（把 `variants/plan` 的返回原样回传）或提交 `axes`（服务端重算后应用）
+      oneOf:
+        - type: object
+          required: [plan]
+          properties:
+            plan: { $ref: '#/components/schemas/VariantMatrixPlan' }
+        - type: object
+          required: [axes]
+          properties:
+            axes:
+              type: array
+              maxItems: 3
+              items: { $ref: '#/components/schemas/VariantAxisInput' }
+
+    VariantPatchRequest:
+      type: object
+      description: |
+        部分更新（只改传了的键）。要"清除划线价"请显式传 `compareAtPrice: null`；**不传**这个键表示"不改"。
+      additionalProperties: false
+      properties:
+        price: { $ref: '#/components/schemas/Money' }
+        compareAtPrice:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          nullable: true
+        imageMediaKey: { type: string, nullable: true, description: 'null = 回退商品主图' }
+        barcode: { type: string, nullable: true, maxLength: 64 }
+        purchasable: { type: boolean, description: 'false = 停用该变体（不进前台可选集，历史订单不受影响）' }
+        weightGram: { type: integer, nullable: true, minimum: 0, maximum: 1000000 }
+
+    VariantBulkUpdateRequest:
+      type: object
+      required: [variantIds]
+      description: 单事务：任一变体失败则全部不生效（部分成功会让管理员无法判断改了哪些）
+      properties:
+        variantIds:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { type: string }
+        price: { $ref: '#/components/schemas/Money' }
+        compareAtPrice:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          nullable: true
+        onHand:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 1000000
+          description: '把 `onHand` 设为该值（走 AdjustOnHand + 流水）。传此键时 `reason` 必填'
+        reason:
+          type: string
+          nullable: true
+          maxLength: 500
+          description: '`onHand` 存在时**必填**（US-E2-08）：流水的 Reason，缺 → 400 VALIDATION_FAILED'
+
+    ImageOrderItem:
+      type: object
+      required: [mediaKey, sortOrder, isPrimary]
+      properties:
+        mediaKey: { type: string, maxLength: 300 }
+        sortOrder: { type: integer, minimum: 0 }
+        isPrimary: { type: boolean }
+
+    # ---------------------------------------------------------------- 库存
+
+    InventoryListItem:
+      type: object
+      required: [variantId, sku, productName, onHand, reserved, sold, available, updatedAt]
+      properties:
+        variantId: { type: string }
+        sku: { type: string }
+        productName: { type: string }
+        onHand: { type: integer, minimum: 0 }
+        reserved: { type: integer, minimum: 0, description: 已下单未支付的预占 }
+        sold: { type: integer, minimum: 0, description: 已支付未发货的占用（货还在仓） }
+        available: { type: integer, description: 'onHand − reserved − sold' }
+        updatedAt: { type: string, format: date-time }
+
+    InventoryListResponse:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/InventoryListItem' }
+
+    InventoryMovement:
+      type: object
+      required: [occurredAt, changeType, operator, onHandBefore, onHandAfter, delta]
+      properties:
+        id: { type: string }
+        occurredAt: { type: string, format: date-time }
+        changeType:
+          type: string
+          description: 变化类型（与 `StockLedger.ChangeType` 一致，只追加不可改）
+          enum: [Initial, ManualAdjust, Reserve, Release, Commit, Ship, RefundRestock, RefundUncommit]
+        operator:
+          type: object
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [System, Admin, Customer] }
+            id: { type: string, nullable: true }
+            name: { type: string, nullable: true, description: 操作人名称快照（人员改名后流水仍还原当时身份） }
+        onHandBefore: { type: integer }
+        onHandAfter: { type: integer }
+        delta: { type: integer, description: 'onHandAfter − onHandBefore（有符号）' }
+        reservedAfter: { type: integer, description: 后置快照，与 delta 互为校验（delta + before = after） }
+        soldAfter: { type: integer }
+        reason: { type: string, nullable: true, description: '手工调整必填（US-E2-08）' }
+        orderNumber: { type: string, nullable: true, description: 来自订单时填写（可据此 grep 完整链路） }
+        holdId: { type: string, nullable: true, description: 预占凭据（Commit/Release 的幂等键） }
+
+    InventoryMovementListResponse:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/InventoryMovement' }
+
+    # ---------------------------------------------------------------- storefront
+
+    StockStatus:
+      type: string
+      enum: [in_stock, low_stock, out_of_stock]
+      description: '判据：available ≤ 0 → out_of_stock；1..5 → low_stock；> 5 → in_stock（前端只认这一个字段）'
+
+    StorefrontCategoryNode:
+      type: object
+      required: [id, slug, name, sortOrder, children]
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        name: { type: string }
+        parentId: { type: string, nullable: true }
+        sortOrder: { type: integer }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/StorefrontCategoryNode' }
+
+    StorefrontProductVariant:
+      type: object
+      required: [key, options, purchasable, price, stockStatus, maxOrderQuantity]
+      properties:
+        key:
+          type: string
+          description: '稳定标识 = `options` 的规范化拼接（如 `color=black|size=m`）。**变体没有 name**，名字由前端拼'
+        options:
+          type: array
+          items: { $ref: '#/components/schemas/VariantOption' }
+        purchasable:
+          type: boolean
+          description: '商家停用 或 售罄 → false。前端置灰用它，不要自己拼 `enabled && available>0`'
+        price: { $ref: '#/components/schemas/Money' }
+        compareAtPrice:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          nullable: true
+        stockStatus: { $ref: '#/components/schemas/StockStatus' }
+        availableQuantity:
+          type: integer
+          nullable: true
+          maximum: 5
+          description: '仅 available ≤ 5 时给真实值，否则 null（封顶成 99 是假信息，已废止）'
+        maxOrderQuantity: { type: integer, minimum: 0, maximum: 99 }
+        sku: { type: string, description: '**只在详情页返回**（列表页批量给 SKU = 把内部编码喂给爬虫）' }
+        imageUrl: { type: string, nullable: true, description: 绝对 URL；null = 用商品主图 }
+
+    StorefrontProductDetail:
+      type: object
+      required: [id, slug, name, images, variantAxes, variants, translatedIn, maxOrderQuantity]
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        name: { type: string }
+        shortDescription: { type: string, nullable: true }
+        descriptionHtml: { type: string, nullable: true, description: 已 sanitize（无 `<style>`/`style` 属性/事件属性） }
+        images:
+          type: array
+          items:
+            type: object
+            required: [url, alt, width, height, sources]
+            properties:
+              url: { type: string }
+              alt: { type: string }
+              width: { type: integer }
+              height: { type: integer }
+              sources:
+                type: object
+                required: [sm, md, lg]
+                properties:
+                  sm: { $ref: '#/components/schemas/ImageSource' }
+                  md: { $ref: '#/components/schemas/ImageSource' }
+                  lg: { $ref: '#/components/schemas/ImageSource' }
+        attributeGroups:
+          type: array
+          description: 商品级属性（按分组展示；供"规格参数"表格）
+          items:
+            type: object
+            required: [name, items]
+            properties:
+              name: { type: string, description: 分组名（属性分组名不翻译，故为单串） }
+              items:
+                type: array
+                items:
+                  type: object
+                  required: [label, value]
+                  properties:
+                    label: { type: string }
+                    value: { type: string }
+        variantAxes:
+          type: array
+          description: 变体选择器（≤3 轴）。`available=false` 的选项前端置灰（其余轴已选定的前提下无货）
+          items:
+            type: object
+            required: [code, name, options]
+            properties:
+              code: { type: string }
+              name: { type: string }
+              options:
+                type: array
+                items:
+                  type: object
+                  required: [code, name, available]
+                  properties:
+                    code: { type: string }
+                    name: { type: string }
+                    available: { type: boolean }
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/StorefrontProductVariant' }
+        price:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: '展示价（可售变体最低价）。`maxOrderQuantity` 在详情页也给一份，避免前端从变体里取值时漏默认值'
+        compareAtPrice:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          nullable: true
+        maxOrderQuantity: { type: integer, minimum: 0, maximum: 99 }
+        translatedIn:
+          type: array
+          description: '哪些 locale 有**实体级**译文行（决定 hreflang 与语言切换器）。页级不存在 → 该 locale 直接 404，不进此数组'
+          items: { type: string, enum: [zh, en] }
+        seo:
+          type: object
+          required: [title, description]
+          properties:
+            title: { type: string }
+            description: { type: string }
+            jsonLd:
+              type: object
+              nullable: true
+              additionalProperties: true
+              description: '可选的 Product JSON-LD 片段（`sku` 只在这里、只在详情页出现）。canonical/og:url **不由后端出**（依赖前端当前页与筛选状态）'
+
+    StorefrontBootstrap:
+      type: object
+      required: [store, theme, nav, cartSummary]
+      properties:
+        store:
+          type: object
+          required: [name, logoUrl, publicSiteUrl, timeZone, currency, locales, defaultLocale, guestCheckoutEnabled, canSell]
+          properties:
+            name: { type: string }
+            logoUrl: { type: string, nullable: true, description: '绝对 URL' }
+            publicSiteUrl: { type: string, description: '绝对 URL，无尾斜杠。**所有对外绝对 URL 的唯一来源**（不读 Host 头，AC-10）' }
+            timeZone: { type: string, example: Asia/Shanghai, description: IANA 时区名 }
+            currency: { type: string, pattern: '^[A-Z]{3}$', example: CNY }
+            locales:
+              type: array
+              items: { type: string, enum: [zh, en] }
+            defaultLocale: { type: string, enum: [zh, en] }
+            guestCheckoutEnabled: { type: boolean }
+            canSell:
+              type: boolean
+              description: '派生值：凭据已填 && 最近一次测试成功 && 通道启用。**没有"人工关闭"这一种**'
+            canSellReason:
+              type: string
+              nullable: true
+              enum: [noCredentials, testFailed, channelDisabled]
+              description: '`canSell=false` 时给**中性**原因（前台不出现"未配置密钥"这类运维语言）。与 503 CANNOT_SELL 的 details.reason 同一套枚举'
+        theme:
+          type: object
+          required: [activeThemeId, tokens, blocks, texts]
+          description: 三层合并（themeDefaults → templateDefaults → instanceOverrides）已在服务端完成，前端直接渲染
+          properties:
+            activeThemeId: { type: string }
+            tokens:
+              type: object
+              additionalProperties: true
+              description: 设计令牌（颜色/字号/间距），键名由主题 schema 定义
+            blocks:
+              type: array
+              items: { type: object, additionalProperties: true }
+              description: 首页区块编排（顺序即数组顺序）
+            texts:
+              type: object
+              additionalProperties: true
+              description: 主题文案（已按 locale 解析）
+        nav:
+          type: object
+          required: [tree]
+          properties:
+            tree:
+              type: array
+              items: { $ref: '#/components/schemas/StorefrontCategoryNode' }
+        cartSummary:
+          type: object
+          required: [count, subtotal]
+          description: '**金额是对象**：`docs/03` §5.3.1 此处写作 `subtotalAmountMinor`（裸数字），本契约按 §5.1「金额一律对象」收敛为 `subtotal: Money`'
+          properties:
+            count: { type: integer, minimum: 0, description: 购物车行数（不是件数；件数需前端求和或另加 field） }
+            itemCount: { type: integer, minimum: 0, description: 件数合计（qty 之和） }
+            subtotal: { $ref: '#/components/schemas/Money' }
+            currency: { type: string, pattern: '^[A-Z]{3}$', description: 冗余回显，便于空车时也渲染币种符号 }
+
+    # ---------------------------------------------------------------- Health
+
+    HealthCheckResult:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [up, down] }
+        detail: { type: string, nullable: true, description: '失败原因（**不出现连接串、路径以外的敏感信息**）' }
+        durationMs: { type: integer, minimum: 0 }
+
+    HealthReadyResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status: { type: string, enum: [ready, degraded] }
+        checks:
+          type: object
+          required: [db, migrations, mediaDir, templatesDir]
+          description: |
+            四项必须全 `up` 才 200：
+            - `db`：连接可用 + 一次 `SELECT 1`
+            - `migrations`：待执行迁移数 > 0 → `down`（滚动发布期间新实例不该先接流量）
+            - `mediaDir`：媒体目录可读可写
+            - `templatesDir`：主题/模板目录可读
+          properties:
+            db: { $ref: '#/components/schemas/HealthCheckResult' }
+            migrations: { $ref: '#/components/schemas/HealthCheckResult' }
+            mediaDir: { $ref: '#/components/schemas/HealthCheckResult' }
+            templatesDir: { $ref: '#/components/schemas/HealthCheckResult' }
+        checkedAt: { type: string, format: date-time }
+
+    # ---------------------------------------------------------------- 错误
+
+    ProblemCode:
+      type: string
+      description: |
+        错误码**封闭枚举**。前缀分段与 `docs/03` §5.1「错误码分段」表一致；表里只给了示例，本枚举给出本轮端点用到的**全部具体码**
+        （比表多出来的码逐条记在 `x-doc-deltas` D18，均为既有前缀族内的具体化，未新增前缀族）。
+        前端只写一套 `code → i18n key` 的映射，**不得按 `title` 文案做判断**（文案会变，码不会）。
+
+        不在本枚举内的前缀族 = **本轮没有对应端点**，不是"用不到"：`CART_*` `CHECKOUT_*` `PAYMENT_*`（含 `CANNOT_SELL`）
+        `ORDER_*`（`ORDER_NOT_FOUND` 除外，查单需要）`REFUND_*` `SETUP_*` `THEME_*` `CONTENT_*` `IDEMPOTENCY_*` `WEBHOOK_*`
+        要等 M2/M3 的端点一起进契约 —— 契约里不出现的码，实现期也不许返回（否则前端映射表会静默走 default 分支）。
+      enum:
+        # --- AUTH_* 登录/会话/权限
+        - AUTH_INVALID_CREDENTIALS
+        - AUTH_LOCKED
+        - AUTH_SESSION_EXPIRED
+        - AUTH_FORBIDDEN
+        - AUTH_CSRF_INVALID
+        # --- VALIDATION_* 入参
+        - VALIDATION_FAILED
+        - PAGE_SIZE_EXCEEDED
+        - PAGE_OUT_OF_RANGE
+        - LOCALE_NOT_ENABLED
+        # --- CATALOG_* 商品域
+        - CATALOG_NOT_FOUND
+        - CATALOG_PRODUCT_GONE
+        - CATALOG_CATEGORY_NOT_EMPTY
+        - CATALOG_CATEGORY_CYCLE
+        - CATALOG_CATEGORY_DEPTH_EXCEEDED
+        - CATALOG_CATEGORY_SORT_CONFLICT
+        - CATALOG_ATTRIBUTE_IN_USE
+        - CATALOG_CODE_DUPLICATE
+        # --- INV_* 商品不变量
+        - INV_PRODUCT_NAME_REQUIRED
+        - INV_PRODUCT_CATEGORY_REQUIRED
+        - INV_PRICE_INVALID
+        - INV_PRIMARY_IMAGE_INVALID
+        # --- AXIS_*
+        - AXIS_LIMIT_EXCEEDED
+        - AXIS_SCOPE_INVALID
+        - AXIS_IMMUTABLE
+        # --- VARIANT_*
+        - VARIANT_LIMIT_EXCEEDED
+        - VARIANT_COMBINATION_DUPLICATE
+        - VARIANT_HAS_SALES_CANNOT_DELETE
+        - VARIANT_AXES_REQUIRED
+        - VARIANT_AXIS_VALUE_INVALID
+        # --- SKU_*
+        - SKU_DUPLICATE
+        # --- PRODUCT_* / CURRENCY_*
+        - PRODUCT_NOT_PUBLISHABLE
+        - PRODUCT_STATUS_INVALID
+        - CURRENCY_MISMATCH
+        # --- INVENTORY_*
+        - INSUFFICIENT_STOCK
+        - STOCK_CHANGED_RETRY
+        - INVENTORY_NEGATIVE_FORBIDDEN
+        # --- 并发 / 限流 / 兜底
+        - CONCURRENT_UPDATE
+        - RATE_LIMIT_EXCEEDED
+        - INTERNAL_UNEXPECTED
+        - SERVICE_UNAVAILABLE
+        - ORDER_NOT_FOUND
+
+    Problem:
+      type: object
+      description: |
+        RFC 7807 + 扩展字段。**唯一的错误响应形状**（全项目只有 `ExceptionProblemDetailsMiddleware` 一个出口，
+        端点与服务里禁止 `try/catch → return []`：把异常吞成空列表会让"200 的空白商品页"被搜索引擎收录）。
+      required: [type, title, status, code, correlationId]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: '问题类型 URI（`https://openstore.dev/errors/{kebab-case-code}`），用于机器识别'
+        title: { type: string, description: 人读标题（默认语言兜底；前端可按 i18n key 重译） }
+        status: { type: integer, description: HTTP 状态码（与响应行一致） }
+        detail: { type: string, nullable: true, description: '**绝不包含 `ex.Message`**（可能含 SQL/路径）；storefront 侧一律中性文案' }
+        instance: { type: string, nullable: true, description: 出问题的请求路径 }
+        code: { $ref: '#/components/schemas/ProblemCode' }
+        correlationId: { type: string, description: '服务端生成/透传的请求 id；客服与运维靠它 grep 日志定位（响应头 `X-Request-Id` 同值）' }
+        errors:
+          type: object
+          nullable: true
+          description: 字段级校验错误（仅 `400 VALIDATION_FAILED`），键 = **camelCase 契约字段名**（与 OpenAPI 一致），值 = 消息数组
+          additionalProperties:
+            type: array
+            items: { type: string }
+        details:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: |
+            按 code 变化的机器可读上下文（前端据此做差异化 UI，不必解析文案）：
+            - `AUTH_LOCKED` → `{unlockAt}`（明确告知何时可试，减少客服）
+            - `CANNOT_SELL` → `{reason, fixPath}`（storefront 只用 reason 的中性文案）
+            - `INVENTORY_NEGATIVE_FORBIDDEN` → `{reserved, sold, minimumOnHand}`
+            - `CATALOG_CATEGORY_NOT_EMPTY` → `{childCount, productCount}`
+            - `PRODUCT_NOT_PUBLISHABLE` → `{reasons[]}`
+            - `RATE_LIMIT_EXCEEDED` → `{scope}`（`read`/`write`/`login`/…，便于前端区分提示语）
+
+  responses:
+
+    Problem:
+      description: RFC 7807 通用错误
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    ValidationProblem:
+      description: 入参校验失败（`400 VALIDATION_FAILED` / `PAGE_SIZE_EXCEEDED` / `PAGE_OUT_OF_RANGE` / `LOCALE_NOT_ENABLED`）
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://openstore.dev/errors/validation-failed
+            title: 提交内容有误
+            status: 400
+            detail: 有 2 个字段未通过校验
+            instance: /api/admin/products
+            code: VALIDATION_FAILED
+            correlationId: 0HMZ7Q2K9V3T1
+            errors:
+              skuRoot: ['SKU 根只能包含大写字母、数字与连字符']
+              categoryIds: ['至少选择 1 个分类']
+            details: null
+
+    UnauthorizedProblem:
+      description: 未认证（`401 AUTH_SESSION_EXPIRED` / 登录失败 `401 AUTH_INVALID_CREDENTIALS`）
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://openstore.dev/errors/auth-session-expired
+            title: 请重新登录
+            status: 401
+            detail: 会话已过期或不存在
+            instance: /api/admin/products
+            code: AUTH_SESSION_EXPIRED
+            correlationId: 0HMZ7Q2K9V3T1
+            errors: null
+            details: null
+
+    ForbiddenProblem:
+      description: 已认证但无权限（`403 AUTH_FORBIDDEN` 缺权限点 / `403 AUTH_CSRF_INVALID` CSRF 或 Origin 校验失败）
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://openstore.dev/errors/auth-forbidden
+            title: 无权访问
+            status: 403
+            detail: 当前账号缺少权限点 perm:catalog.delete
+            instance: /api/admin/products/01J8ZF9H2X
+            code: AUTH_FORBIDDEN
+            correlationId: 0HMZ7Q2K9V3T1
+            errors: null
+            details: null
+
+    NotFoundProblem:
+      description: 资源不存在（`404 CATALOG_NOT_FOUND` / `404 ORDER_NOT_FOUND`）。**越权也走它**：403 等于确认"该资源存在"
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://openstore.dev/errors/catalog-not-found
+            title: 未找到
+            status: 404
+            detail: 商品不存在或已删除
+            instance: /api/admin/products/01J8ZF9H2X
+            code: CATALOG_NOT_FOUND
+            correlationId: 0HMZ7Q2K9V3T1
+            errors: null
+            details: null
+
+    GoneProblem:
+      description: 资源曾存在但已永久下线（`410 CATALOG_PRODUCT_GONE`）。storefront 商品页专用：**不带任何详情**
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://openstore.dev/errors/catalog-product-gone
+            title: 商品已下架
+            status: 410
+            detail: 该商品已下架
+            instance: /api/storefront/products/rm-s1-servo
+            code: CATALOG_PRODUCT_GONE
+            correlationId: 0HMZ7Q2K9V3T1
+            errors: null
+            details: null
+
+    ConflictProblem:
+      description: |
+        业务规则或状态冲突（`409`）。不带 `Retry-After` 的是"改了状态才能继续"（如 `PRODUCT_NOT_PUBLISHABLE`、
+        `INVENTORY_NEGATIVE_FORBIDDEN`、`CATALOG_CATEGORY_NOT_EMPTY`、`STOCK_CHANGED_RETRY`、`CONCURRENT_UPDATE`）。
+        **`409` 一律表示"请求格式没错，是当前状态不允许"**，不用 400。
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://openstore.dev/errors/product-not-publishable
+            title: 当前状态不允许上架
+            status: 409
+            detail: 商品缺少可售条件
+            instance: /api/admin/products/01J8ZF9H2X/publish
+            code: PRODUCT_NOT_PUBLISHABLE
+            correlationId: 0HMZ7Q2K9V3T1
+            errors: null
+            details:
+              reasons: ['至少需要 1 个启用的变体', '至少需要 1 张图片', '变体 SERVO-COLO-BLACK 没有价格']
+
+    LockedProblem:
+      description: 账号被锁定（`423 AUTH_LOCKED`）。连续 5 次失败锁 15 分钟；`details.unlockAt` 明确告知何时可试
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://openstore.dev/errors/auth-locked
+            title: 账号已临时锁定
+            status: 423
+            detail: 连续登录失败次数过多，请稍后再试
+            instance: /api/admin/auth/login
+            code: AUTH_LOCKED
+            correlationId: 0HMZ7Q2K9V3T1
+            errors: null
+            details:
+              unlockAt: '2025-11-15T17:02:00+08:00'
+
+    TooManyRequestsProblem:
+      description: 限流（`429 RATE_LIMIT_EXCEEDED` + `Retry-After`）。`details.scope` 标明命中的策略（`read`/`write`/`login`/…）
+      headers:
+        Retry-After: { schema: { type: integer, example: 30 }, description: 建议等待秒数 }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://openstore.dev/errors/rate-limit-exceeded
+            title: 请求太频繁
+            status: 429
+            detail: 请稍后再试
+            instance: /api/admin/products
+            code: RATE_LIMIT_EXCEEDED
+            correlationId: 0HMZ7Q2K9V3T1
+            errors: null
+            details:
+              scope: admin-write
+
+    ServiceUnavailableProblem:
+      description: |
+        数据源/依赖不可用（`503 SERVICE_UNAVAILABLE`）。**这是"绝不把异常吞成 200 + 空列表"的落点**：
+        DB 故障、查询报错、缓存后源数据读失败一律 503 + `Retry-After`，让反代的可用性告警能响、让前端渲染"暂时不可用"
+        并给该错误页输出 `noindex`（空壳页被索引比不索引更糟）。
+      headers:
+        Retry-After: { schema: { type: integer, example: 30 } }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://openstore.dev/errors/service-unavailable
+            title: 服务暂时不可用
+            status: 503
+            detail: 数据暂时不可用，请稍后重试
+            instance: /api/storefront/products
+            code: SERVICE_UNAVAILABLE
+            correlationId: 0HMZ7Q2K9V3T1
+            errors: null
+            details: null
+
+# ============================================================================
+x-doc-deltas:
+  description: |
+    本契约与 `docs/03-后端设计.md` §5 的**表述级**差异（语义级冲突已上报主理人裁决）。每条都给了理由；
+    反向修改文档或修改契约都必须同步这张表，否则下一个人会以为其中一边写错了。
+  items:
+    - id: D1
+      where: docs/03 §5.3.1 `GET /api/storefront/bootstrap` → `cartSummary{count,subtotalAmountMinor}`
+      contract: '`cartSummary.subtotal: Money`（+ 冗余 `currency`、件数 `itemCount`）'
+      why: '§5.1 明令"金额一律 {amountMinor,currency} 对象、禁止裸数字"，与同一文档 §5.3.1 的写法自相矛盾。以 §5.1 为准'
+    - id: D2
+      where: docs/03 §5.4 `GET /api/admin/inventory/{variantId}/movements`（给了 `page` 参数但响应是裸数组）
+      contract: '统一分页信封 `{items,page,pageSize,total,pageCount}`'
+      why: '§5.1「分页（统一）」优先。裸数组 + page 参数会让前端必须为这一个接口写第二套解析'
+    - id: D3
+      where: docs/03 §5.4 `GET/POST/PUT/DELETE /api/admin/attributes`（请求字段列了 `required`）
+      contract: '属性定义层无 `required`；必填落在 `attributeSet.members[].isRequired`'
+      why: '数据模型 §3.1 把 `IsRequired` 放在 `AttributeSetMember` 上（同一属性在不同分类可必填/选填）。定义层再加一个 required 就是两个真源'
+    - id: D4
+      where: docs/03 §5.4 `GET/PUT /api/admin/products/{id}`（"同上 + `images[]` `variants[]`"）
+      contract: 'PUT 只改基础信息，不含 `images`/`variants`（各有独立写入口）'
+      why: '同一事实两个写入口必然漂移（主图/变体状态最后谁生效取决于请求先后）。契约里只保留一个写路径'
+    - id: D5
+      where: docs/03 §5.4 `GET /api/admin/products/{id}`（"含成本价"）
+      contract: 'admin DTO 出现 `internalCode`/`internalNote`/库存三件套，**不出现成本价**'
+      why: '数据模型 `Product`/`ProductVariant` **没有成本列**。契约不能凭空造一个没有持久化的字段；若二期要成本，先加列再扩契约（新增字段是非破坏性变更）'
+    - id: D6
+      where: docs/03 §5.4 `POST /api/admin/products/{id}/variants/apply`（响应"最新变体列表"）
+      contract: '响应对象 `{changed, applied{added,kept,disabled,deleted}, variants[]}`'
+      why: '幂等语义要可观测：`changed:false` 是"重复 apply 无变化"这一断言在 HTTP 层的唯一观测点，裸数组表达不了'
+    - id: D7
+      where: docs/03 §5.4 `POST /api/admin/products/{id}/variants/bulk`（字段 `variantIds[] price? onHand?`）
+      contract: '增加 `reason`（有 `onHand` 时必填）'
+      why: 'INV-S03/US-E2-08 要求手工调整必须留原因。批量改库存同样是手工调整，缺 reason 的流水与"有人绕过 API 改库"无法区分'
+    - id: D8
+      where: docs/03 §5.4 `GET /api/admin/categories`（分类 CRUD 与 `/{id}` 写在一行）
+      contract: '拆成 6 个独立操作：列表(树) / 新建 / 详情 / 更新 / 删除 / 排序'
+      why: '一行表格无法表达各自的入参、状态码与错误码；契约必须逐一可校验（也是 `x-permission` 逐端点声明的前提）'
+    - id: D9
+      where: docs/03 §5.4 `POST /api/admin/products/{id}/publish`（`204`）
+      contract: '保持 `204`，但补 `409 PRODUCT_NOT_PUBLISHABLE` + `details.reasons[]`'
+      why: '原文只写"发布校验 INV-P10"，没给失败时的状态码与形状。逐条列出缺失条件，管理员才能一次补齐'
+    - id: D10
+      where: docs/03 §5.4 `DELETE /api/admin/categories/{id}`（"删除前返回 childCount/productCount 拦截"）
+      contract: '`409 CATALOG_CATEGORY_NOT_EMPTY` + `details{childCount,productCount}`'
+      why: '原文说了"要返回计数"但没给 code。前缀落在既有 `CATALOG_*` 族内，未新增前缀族'
+    - id: D11
+      where: docs/03 §5.1 与 §2.1（`docs/03` §5.6.1 `maxOrderQuantity` = `min(99, available)`）
+      contract: '`maxOrderQuantity` 上限 99，取值由后端按 `min(99, available)` 给出'
+      why: '数据模型 §8.2 写作"= ORDER_LINE_QUANTITY_CAP（默认 10），与库存无关"，与 `docs/03` 冲突。本契约按 `docs/03`（本轮实现口径），**已在回报里请主理人裁决**（差异是 10 vs 99，影响"一次最多买几件"）'
+    - id: D12
+      where: 现有代码 `src/OpenStore.Api/Endpoints/Storefront/ProductEndpoints.cs`（`/api/v1/{locale}/products/{slug}`）
+      contract: '`/api/storefront/products/{slug}?locale=zh`'
+      why: '§5.1 Base path 是 `/api/storefront/*`，locale 是 query 参数不是路径段。现有 M0 路由与文档、与前端设计都不一致，M1 须改到契约'
+    - id: D13
+      where: 现有代码 `src/OpenStore.Application/Common/Permissions.cs`（`perm:catalog.product.write`）
+      contract: '`perm:catalog.write` / `perm:catalog.read` / `perm:catalog.delete`（照 §6.4 矩阵逐字）'
+      why: '权限码是前后端与门禁测试三方共用的字面量，必须与 §6.4 一致；`catalog.product.write` 这个名字在矩阵里不存在，属于实现期自造'
+    - id: D14
+      where: 现有代码 `src/OpenStore.Application/Catalog/Dtos/Storefront/StorefrontProductDto.cs`（扁平 `Currency` + `AmountMinor` + `IsAvailable`）
+      contract: '`price: Money` + `stockStatus` + `availableQuantity` + `maxOrderQuantity`'
+      why: '前端类型已按 `amountMinor` 对象生成（§5.1），扁平双列会让"价格"在两处有不同的读法，且 `IsAvailable` 无法表达 `low_stock`'
+    - id: D15
+      where: 数据模型 §3.6（Cookie `os_sf_session` / `os_admin_session`）vs docs/03 §6.1（`os_admin_sid` / `os_shop_sid`）、`Session.RevokeReason` 为 `S100`/§6.2 为 `smallint`
+      contract: '契约按 docs/03 §6.1：`os_admin_sid` + `os_admin_csrf`（Cookie 名不在 OpenAPI 里强约束，但 securityScheme 与 Set-Cookie 描述用了 §6.1 的名字）'
+      why: '同一份材料里两套 Cookie 名。已请 data-engineer 在表定义侧统一到 §6.1（Cookie 名不影响列定义，只是文档口径）'
+    - id: D16
+      where: docs/03 §5.4 `POST /api/admin/products/{id}/images`（响应 `{mediaKey,url,width,height,sources}`）
+      contract: '`ImageAsset`（同一形状 + `alt/isPrimary/sortOrder`，状态码 `201`）'
+      why: '上传成功是"创建了一个资源"，按 §5.1「创建 201 + Location」应为 201 而非 200；多出的三个回显字段让前端无需再查一次列表'
+    - id: D17
+      where: docs/03 §5.4 `POST /api/admin/auth/change-password`（当前密码错误时的形状未定义）
+      contract: '`400 VALIDATION_FAILED` + `errors.currentPassword`'
+      why: '用户此时已认证，无需用 401 防枚举；字段级错误让前端能把提示挂到输入框上'
+    - id: D18
+      where: docs/03 §5.1「错误码分段」表只给了每个前缀族 1~3 个示例码，未给出封闭集合
+      contract: |
+        在**既有前缀族内**具体化出本轮需要的码（未新增前缀族）：
+        `CATALOG_NOT_FOUND`(404) / `CATALOG_PRODUCT_GONE`(410) / `CATALOG_CATEGORY_NOT_EMPTY`(409) /
+        `CATALOG_CATEGORY_CYCLE`(409) / `CATALOG_CATEGORY_DEPTH_EXCEEDED`(409) / `CATALOG_CATEGORY_SORT_CONFLICT`(409) /
+        `CATALOG_ATTRIBUTE_IN_USE`(409) / `CATALOG_CODE_DUPLICATE`(409)。
+        另把文档 §2.1/§2.2 已命名的不变量码收进枚举：`INV_PRODUCT_NAME_REQUIRED` `INV_PRODUCT_CATEGORY_REQUIRED`
+        `INV_PRICE_INVALID` `INV_PRIMARY_IMAGE_INVALID` `AXIS_*` `VARIANT_*` `SKU_DUPLICATE` `PRODUCT_NOT_PUBLISHABLE`
+        `PRODUCT_STATUS_INVALID` `CURRENCY_MISMATCH` `INVENTORY_NEGATIVE_FORBIDDEN` `CONCURRENT_UPDATE`
+      why: |
+        契约里的 `code` 必须是封闭枚举，否则前端无法穷举映射、测试无法断言"只出现登记过的码"。
+        §5.1 给的是**前缀分段规则**（`CATALOG_*` 覆盖商品，`INV_*` 覆盖商品不变量…），具体码属于契约该补的活。
+        命名规则固定为 `{前缀}_{资源}_{原因}`，不引入同义重复（例如"分类非空"只有一个码，不再另设 `CATEGORY_NOT_DELETABLE`）。
+    - id: D19
+      where: docs/03 §5.4 `GET/POST/PUT/DELETE /api/admin/attributes` 与 `/attribute-sets`（未说明是否分页）
+      contract: '**不分页**，返回数组；只有商品/库存/流水走分页信封'
+      why: |
+        属性定义/属性集是百级以内的小集合，管理端在"分类编辑 / 属性集编辑 / 商品录入"三处都要做下拉，必须一次取全。
+        分页会让每个下拉框先请求一次总数再请求一次数据 —— 纯浪费，且下拉框本来就要全量。
+    - id: D20
+      where: docs/03 §5.1（未规定可变资源的并发控制入口）
+      contract: '商品/分类/属性/属性集的可变 DTO 带只读 `version`；更新时可选回传，回传即做乐观锁（不匹配 `409 CONCURRENT_UPDATE`）'
+      why: |
+        数据模型 §3.1 已有统一 `long Version`；契约不暴露它，前端就只能盲写（两个浏览器窗口同时编辑会静默覆盖）。
+        定为**可选**而不是必填：M1 是单管理员场景，必填会给 curl/脚本与已有前端增加无收益的负担；
+        回传即校验，让"想用的人"能拿到保护。这是明确的取舍，不是遗漏。
+    - id: D21
+      where: docs/03 §5.4 商品列表返回 `skuRoot`，但数据模型 `Product` 表**没有 `SkuRoot` 列**
+      contract: '保留 `skuRoot`（创建时必填、列表回显），并已请 data-engineer 在实体↔表映射里补该列'
+      why: |
+        `skuRoot` 是"批量录商品时 SKU 的生成前缀"，从 `ProductVariant.Sku` 反推不可靠（商家可手改单个 SKU）。
+        契约先行（前端要用它做录入提示），列由 data-engineer 在任务 #2 落实；若最终不加列，本字段须改为商品详情里的派生字段并另议。
+    - id: D22
+      where: 主键类型三方不一致：数据模型 `Id = long`、现有代码 `Guid`、docs/03 示例 `01J8Z...`（ULID 形态）
+      contract: '契约里所有 id 一律声明为**不透明字符串**（`type: string`，不约束格式），不做任何数值/ULID 语义承诺'
+      why: |
+        字符串是最小承诺：无论最终用 long、Guid 还是 ULID，前端代码都不用改。若契约里写 `integer`，改用 Guid 时是全站破坏性变更。
+        最终类型由 data-engineer 在任务 #2 裁定，契约不需要跟着变（这是有意的解耦，不是含糊）。

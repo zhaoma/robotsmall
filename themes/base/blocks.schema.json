@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openstore.dev/themes/base/blocks.schema.json",
+  "title": "base 主题首页区块：白名单 + 每个区块的可编辑 props schema（单一真源）",
+  "description": "区块只在 $defs.blockKey.enum 声明一次，manifest 不再有 blocks[]（该字段已删除：storefront 读 ThemeDefinition.blocks 代码、admin 读本文件，manifest 的 blocks[] 没有真实消费者，它的门禁在防一个不该存在的错误）。$defs.blocks 为每个区块声明可编辑 props；声明了区块却没声明 props 报 BLOCK_PROPS_MISSING，症状是『后台能插入区块但无法配置任何东西』，商家会以为主题坏了。",
+  "type": "object",
+  "$defs": {
+    "blockKey": {
+      "type": "string",
+      "enum": ["hero", "productGrid", "richText", "footer"],
+      "description": "本主题提供的首页区块白名单。注意这里只做取值枚举、不在这里表达 props —— props 在 $defs.blocks 里，两者由 check-themes 做一致性校验。故意在 manifest schema 层让 blockKey 只受形态约束（不受枚举约束），否则 V6 注入会在结构层被 SCHEMA_INVALID 拦掉，拿不到语义化错误码；后人不要『顺手把枚举补全』，那会让 V6 静默失效。"
+    },
+    "blocks": {
+      "description": "区块 → 可编辑 props schema。键集必须覆盖 blockKey.enum 的每一项。",
+      "hero": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "heading": { "type": "string", "maxLength": 80 },
+          "subheading": { "type": "string", "maxLength": 160 },
+          "imageUrl": { "type": "string" },
+          "ctaLabel": { "type": "string", "maxLength": 32 },
+          "ctaHref": { "type": "string" }
+        },
+        "required": ["heading"]
+      },
+      "productGrid": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "collectionKey": { "type": "string" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 24, "default": 8 },
+          "columns": { "type": "integer", "enum": [2, 3, 4], "default": 4 }
+        },
+        "required": ["collectionKey"]
+      },
+      "richText": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "bodyKey": { "type": "string" },
+          "align": { "type": "string", "enum": ["left", "center"], "default": "left" }
+        },
+        "required": ["bodyKey"]
+      },
+      "footer": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "copyright": { "type": "string", "maxLength": 120 },
+          "showSocial": { "type": "boolean", "default": true }
+        },
+        "required": ["copyright"]
+      }
+    }
+  }
+}

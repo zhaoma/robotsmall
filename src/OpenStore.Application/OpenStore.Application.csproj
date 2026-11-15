@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OpenStore.Application</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Application → Domain 是唯一允许的出边。禁止 PackageReference EF Core（门禁 Layering）。 -->
+  <ItemGroup>
+    <ProjectReference Include="..\OpenStore.Domain\OpenStore.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

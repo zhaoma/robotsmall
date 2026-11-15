@@ -1,0 +1,56 @@
+{
+  "template.name": "女装",
+  "template.description": "女装垂直站的示例分类、属性集与变体矩阵（颜色 × 尺码）。",
+
+  "category.tops.label": "上装",
+  "category.dresses.label": "连衣裙",
+  "category.bottoms.label": "下装",
+  "category.outerwear.label": "外套",
+
+  "set.apparel.label": "服装属性",
+  "set.outerwear.label": "外套属性",
+
+  "attr.color.label": "颜色",
+  "attr.color.option.black": "黑色",
+  "attr.color.option.white": "白色",
+  "attr.color.option.beige": "米色",
+  "attr.color.option.navy": "藏青",
+  "attr.color.option.wine": "酒红",
+  "attr.color.option.sage": "雾绿",
+
+  "attr.size.label": "尺码",
+  "attr.size.option.xs": "XS",
+  "attr.size.option.s": "S",
+  "attr.size.option.m": "M",
+  "attr.size.option.l": "L",
+  "attr.size.option.xl": "XL",
+
+  "attr.fabric.label": "面料",
+  "attr.fabric.option.cotton": "棉",
+  "attr.fabric.option.silk": "真丝",
+  "attr.fabric.option.wool": "羊毛",
+  "attr.fabric.option.polyester": "聚酯纤维",
+
+  "attr.fit.label": "版型",
+  "attr.fit.option.slim": "修身",
+  "attr.fit.option.regular": "常规",
+  "attr.fit.option.loose": "宽松",
+
+  "attr.insulation.label": "保暖度",
+  "attr.insulation.option.light": "轻薄",
+  "attr.insulation.option.mid": "适中",
+  "attr.insulation.option.heavy": "厚重",
+
+  "product.tee_basic.name": "基础款圆领 T 恤",
+  "product.shirt_oxford.name": "牛津纺衬衫",
+  "product.knit_cardigan.name": "针织开衫",
+  "product.dress_slip.name": "吊带连衣裙",
+  "product.dress_wrap.name": "裹身连衣裙",
+  "product.jeans_straight.name": "直筒牛仔裤",
+  "product.skirt_pleated.name": "百褶半身裙",
+  "product.coat_wool.name": "羊毛大衣",
+  "product.jacket_puffer.name": "轻薄羽绒服",
+
+  "shipping.cn_mainland.label": "中国大陆",
+  "tax.cn.label": "中国大陆增值税"
+}
