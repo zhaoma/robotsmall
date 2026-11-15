@@ -189,8 +189,14 @@ else
   # 放在最后：它是纯文本扫描，零依赖、秒级；失败信息自带行号与上下文，
   # 不需要像其他步骤那样靠日志尾巴定位。
   # 判据在 docs/01 的「结构规则 3」，机器实现在 scripts/check-doc-version-refs.sh。
+  #
+  # 先跑 `--self-test` 再跑正式扫描，且两者必须串在同一行（同一个入口）：
+  # 这个脚本的豁免逻辑是「按文件结构推导区间」，推导错了不会报错、只会少扫一段，
+  # 于是判绿——这是最容易假绿的一类判据。而自证不进 CI 就会慢慢烂掉：
+  # verify-seo-matrix.sh 的 --self-test 曾经坏到「只打印一行标题就退出」，
+  # 整整一轮没人发现，因为没人跑它。所以自证必须被每一次门禁运行带着跑。
   run_step 15 doc_version_refs "文档版本号引用" \
-    ./scripts/check-doc-version-refs.sh
+    bash -c './scripts/check-doc-version-refs.sh --self-test && ./scripts/check-doc-version-refs.sh'
 fi
 
 # ---- 汇总 -------------------------------------------------------------------
