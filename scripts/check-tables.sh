@@ -164,23 +164,47 @@ def judge_file(path, rel):
         return d, c
 
     # ---- T1 孤行 ----
+    # 先算出"哪些行真的在某张合法的表里"（表头 + 分隔行 + 同深度的后续行），剩下的才是孤行。
+    # 不能只看"上一行是不是表格行"：**孤行段里第 2 行往后，上一行恰好也是表格行**，于是会被
+    # 当成"续行"而漏报——docs/03 修复前是 56~59 四行连续掉出引用块，旧判据只报第 1 行，
+    # 照着报错修就会只修首行、再跑一次又红一行。**报告要能一次改完，否则每次运行只前进一行。**
+    headers = {}
     for k in range(len(lines)):
-        a = info(k)
-        if a is None:
-            continue
-        b = info(k + 1)
-        if b is not None and is_sep(b[1]):
-            continue                      # 它是表头，下一行是分隔行 → 合法表格起点
-        p = info(k - 1)
-        if p is not None and p[0] == a[0]:
-            continue                      # 同一引用层级内的续行 → 合法
-        if is_sep(a[1]):
-            fails.append(('T1', k + 1,
-                          '分隔行前面不是表头行 → 这张表没有起点（表头多半被粘在段落同一行末尾）'))
+        a0 = info(k)
+        b0 = info(k + 1)
+        if a0 is not None and b0 is not None and is_sep(b0[1]) and not is_sep(a0[1]):
+            headers[k] = a0[0]
+
+    in_table = set()
+    for h, d in headers.items():
+        in_table.add(h)
+        in_table.add(h + 1)                       # 分隔行
+        j = h + 2
+        while True:
+            t = info(j)
+            if t is None or t[0] != d or is_sep(t[1]) or j in headers:
+                break
+            in_table.add(j)
+            j += 1
+
+    orphans = [k for k in range(len(lines)) if info(k) is not None and k not in in_table]
+    runs = []
+    for k in orphans:
+        d = info(k)[0]
+        if runs and runs[-1][1] == k - 1 and runs[-1][2] == d:
+            runs[-1][1] = k                       # 同一段孤行的续行
         else:
-            fails.append(('T1', k + 1,
-                          '孤行（前一行不是同一引用层级 [%d] 内的表格行）→ 会被渲染成带竖线的普通文本'
-                          % a[0]))
+            runs.append([k, k, d])
+
+    for first, last, d in runs:
+        span = '' if first == last else '（连续 %d 行，%d-%d）' % (last - first + 1, first + 1, last + 1)
+        if is_sep(info(first)[1]):
+            fails.append(('T1', first + 1,
+                          '分隔行前面不是表头行 → 这张表没有起点（表头多半被粘在段落同一行末尾）%s' % span))
+        else:
+            fails.append(('T1', first + 1,
+                          '孤行（前一行不是同一引用层级 [%d] 内的表格行）→ 会被渲染成带竖线的普通文本%s'
+                          % (d, span)))
 
     # ---- T2 列数 ----
     tables = []
