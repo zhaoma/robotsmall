@@ -113,6 +113,7 @@ if [ "$MODE" = "list" ]; then
   step 13 sql_count           "分类页首屏 SQL 条数 <= 8"
   step 14 seo_matrix          "索引控制矩阵 S1~S11"
   step 15 doc_version_refs    "docs 正文不得出现需求基线版本号"
+  step 16 table_integrity     "docs 表格孤行/列数不符/围栏未配对"
   exit 0
 fi
 
@@ -197,6 +198,18 @@ else
   # 整整一轮没人发现，因为没人跑它。所以自证必须被每一次门禁运行带着跑。
   run_step 15 doc_version_refs "文档版本号引用" \
     bash -c './scripts/check-doc-version-refs.sh --self-test && ./scripts/check-doc-version-refs.sh'
+
+  # ---- 16 表格完整性 --------------------------------------------------------
+  # 与 15 相邻不是巧合：两者治的是同一个盲区——**文档结构坏了，但没有任何东西会报错**。
+  # 表格断掉时 GFM 不警告，只是把那些行当普通段落渲染，于是"一份看起来在表里的内容"
+  # 实际不在表里；它长得仍然像表格（文本里全是竖线），评审扫过去不会停。
+  # 这一族已经两次成规模出现（05 的 Q15 行；00/03/04/06 共 4 处），故从评审移交门禁。
+  #
+  # 判据三条：T1 孤行/表头缺失、T2 列数不符、T3 围栏未配对。
+  # 同样把 `--self-test` 串在同一行：它的判定依赖「引用深度」与「围栏状态」两个状态机，
+  # 而状态机写错的方向是**少判**——把该红的行跳过，表现就是绿。这个方向没有别的信号。
+  run_step 16 table_integrity "表格完整性" \
+    bash -c './scripts/check-tables.sh --self-test && ./scripts/check-tables.sh'
 fi
 
 # ---- 汇总 -------------------------------------------------------------------
