@@ -1417,8 +1417,10 @@ paths:
         `canSell=false` 时前端禁用"去结算"并显示中性原因；但**服务端仍必须二次拦截**（`/checkout/confirm` 的第一条语句断言它）：
         前端禁用只是 UX，改 JS 就绕过了。
 
-        `store.canSellReason` 与 `503 CANNOT_SELL` 的 `details.reason` 是**同一套枚举** `{noCredentials, testFailed, channelDisabled}`，
-        `ok` 永不出现（两套词表并存时，前端的映射表必漏一个）。
+        `store.canSellReason` 与 `503 CANNOT_SELL` 的 `details.reason` 是**同一套枚举** `{noCredentials, testFailed, channelDisabled}`
+        （就是 `canSellReason` 去掉 `ok`），**共用一张表、不做改名映射**；`ok` 永不出现。
+        另：**瞬时失败不走 `CANNOT_SELL`**，走 `PAYMENT_PROVIDER_UNAVAILABLE` —— 那是**另一个判定域**，
+        `details.reason ∈ {providerTimeout, providerError, providerRateLimited}`（"这一次请求为什么失败"，与"现在为什么不能卖"互斥）。
         带 `ETag`：SSR 可用 `If-None-Match` 拿 `304`，省掉序列化与传输。
       security: []
       x-permission: null
@@ -2406,7 +2408,7 @@ components:
               type: string
               nullable: true
               enum: [noCredentials, testFailed, channelDisabled]
-              description: '`canSell=false` 时给**中性**原因（前台不出现"未配置密钥"这类运维语言）。与 503 CANNOT_SELL 的 details.reason 同一套枚举'
+              description: '`canSell=false` 时给**中性**原因（前台不出现"未配置密钥"这类运维语言）。与 `503 CANNOT_SELL` 的 `details.reason` **同一套枚举**（后者即本枚举去掉 `ok`），共用一张表。`ok` 只在 `canSell=true` 时出现'
         theme:
           type: object
           required: [activeThemeId, tokens, blocks, texts]
@@ -2483,8 +2485,19 @@ components:
         前端只写一套 `code → i18n key` 的映射，**不得按 `title` 文案做判断**（文案会变，码不会）。
 
         不在本枚举内的前缀族 = **本轮没有对应端点**，不是"用不到"：`CART_*` `CHECKOUT_*` `PAYMENT_*`（含 `CANNOT_SELL`）
-        `ORDER_*`（`ORDER_NOT_FOUND` 除外，查单需要）`REFUND_*` `SETUP_*` `THEME_*` `CONTENT_*` `IDEMPOTENCY_*` `WEBHOOK_*`
+        `ORDER_*`（`ORDER_NOT_FOUND` 除外，查单需要）`REFUND_*` `THEME_*` `CONTENT_*` `IDEMPOTENCY_*` `WEBHOOK_*`
         要等 M2/M3 的端点一起进契约 —— 契约里不出现的码，实现期也不许返回（否则前端映射表会静默走 default 分支）。
+
+        **反方向不成立：在枚举内 ≠ 有端点。** 本枚举回答的是"**允许**返回哪些码"（前端 `code → i18n` 映射表的封闭集合），
+        不是"有哪些路径"。两者是不同维度，混起来会得出两个都错的结论：
+        - **在枚举内、本轮无端点** → 这是**契约先行**的码：前端与运维/测试脚本**可以依赖**它（写映射、写断言、写 Runbook 分支），
+          但**不要指望本轮能真的调出这个响应**。这是排期问题，不是契约问题；把它从枚举里删掉才是破坏契约。
+        - **不在枚举内、但有端点** → 这是**缺陷**，必须先补枚举再用（`x-doc-deltas` D18 就是这条的执行痕迹）。
+
+        **例外：三个向导码 `SetupAlreadyCompleted` / `SetupInProgress` / `SetupResetting` 已先行登记在本枚举里**（虽然
+        `/api/setup/*` 的路径表还没补齐）。理由：它们的拼写已被 `docs/01`、`docs/03` §5.1、架构三处声明为**契约**，
+        而"改错误码等于破坏契约"这条约束**缺了枚举就成了唯一没有机器执行的地方** —— 前端只能手写字符串，写错一个字母
+        不报错，只表现为"向导页面卡在加载态"。**PascalCase 是需求原文，不要"统一"成大写下划线。**
       enum:
         # --- AUTH_* 登录/会话/权限
         - AUTH_INVALID_CREDENTIALS
@@ -2531,6 +2544,10 @@ components:
         - INSUFFICIENT_STOCK
         - STOCK_CHANGED_RETRY
         - INVENTORY_NEGATIVE_FORBIDDEN
+        # --- Setup（路径随 M2 进契约，三个字面量先登记；PascalCase 逐字照抄需求原文，不要规范化）
+        - SetupAlreadyCompleted
+        - SetupInProgress
+        - SetupResetting
         # --- 并发 / 限流 / 兜底
         - CONCURRENT_UPDATE
         - RATE_LIMIT_EXCEEDED
@@ -2747,6 +2764,8 @@ x-doc-deltas:
   description: |
     本契约与 `docs/03-后端设计.md` §5 的**表述级**差异（语义级冲突已上报主理人裁决）。每条都给了理由；
     反向修改文档或修改契约都必须同步这张表，否则下一个人会以为其中一边写错了。
+    **`state: resolved` 的条目是"已消解的历史冲突"，不是待办** —— 编号保留只为追溯，处理时不要把它
+    当成"这边和文档还不一致"。没有 `state` 字段的条目才是尚未消解、需要两侧保持同步的差异。
   items:
     - id: D1
       where: docs/03 §5.3.1 `GET /api/storefront/bootstrap` → `cartSummary{count,subtotalAmountMinor}`
@@ -2796,9 +2815,14 @@ x-doc-deltas:
       contract: '`409 CATALOG_CATEGORY_NOT_EMPTY` + `details{childCount,productCount}`'
       why: '原文说了"要返回计数"但没给 code。前缀落在既有 `CATALOG_*` 族内，未新增前缀族'
     - id: D11
-      where: docs/03 §5.1/§5.6.1 `maxOrderQuantity` = `min(99, available)` vs 数据模型 §8.2 "= ORDER_LINE_QUANTITY_CAP（默认 10），与库存完全无关"
-      contract: '`maxOrderQuantity = min(99, available)`（真实 available，不受截断影响），**主理人裁决 R1 已定稿**；数据模型 §8.2 该句作废'
+      state: resolved
+      where: docs/03 §5.1/§5.6.1 `maxOrderQuantity` = `min(99, available)`（原冲突对象是数据模型 §8.2 的旧句，该句已在 02 里带删除线作废）
+      contract: '`maxOrderQuantity = min(99, available)`（真实 available，不受截断影响），**主理人裁决 R1 已定稿**'
       why: |
+        **本条已消解，不是待办**：数据模型 §8.2 已按 A1 改判并在原文留删除线 + "已作废"标注，
+        "契约 vs 数据模型"的冲突不再存在，任何一侧都不需要再改。
+        保留编号只为追溯（02/04 可能引用过 D11），**不要读成"还有一条没处理"**。
+
         R1 裁决理由（原文要点）：前台加购必须受可售量约束，否则用户能加 10 件而库存只有 3 件，
         报错要等到下单那一步 —— 那时用户已经填完地址与支付方式，属于最贵的失败点。
         `min(99, available)` 同时表达"单次最多 99"与"不超过现有库存"，也是 §5.6.1 的原意。
