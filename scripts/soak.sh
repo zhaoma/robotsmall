@@ -400,6 +400,51 @@ self_test() {
   printf 'kern: [12345.678] Out of memory: Killed process 4242 (dotnet) total-vm:1234567kB\n' > "$TMPD/k11"
   run_case "内核日志记录 OOM（cgroup 计数仍为 0）" "A7" "$TMPD/c1" "$TMPD/r1" "$TMPD/i1" "$TMPD/e1" "$TMPD/k11"
 
+  # ---- seed-meta 解析：键名对不上必须红，而且必须**在加压前**红 ----
+  # 这一组的来历：本脚本第一版按 `per_category` 取值，造数器打的是
+  # `spec_products_per_category`，于是 META 里那行恒为空 —— 一个"总是成功、从不生效"的守卫。
+  # 判据不是"能解析出值"，而是"**键名写错时解析会失败**"，所以下面特地把键改坏再验一次。
+  mt() {  # $1 名称 $2 期望 $3 实得
+    total=$((total+1))
+    if [ "$2" = "$3" ]; then
+      printf '  ok    %s → %s\n' "$1" "$3"
+    else
+      printf '  WRONG %s → 期望=%s 实得=%s\n' "$1" "$2" "$3"
+      failn=$((failn+1))
+    fi
+  }
+  probe_meta() {  # $1 文件 → 打印 "rc|products|variants|ppc|fingerprint"
+    ( SEED_META="$1"; load_seed_meta >/dev/null 2>&1; rc=$?
+      printf '%s|%s|%s|%s|%s' "$rc" "$SM_PRODUCTS" "$SM_VARIANTS" "$SM_PPC" "$SM_FP" )
+  }
+  mk_seed() {  # $1 文件  $2 ppc 键名  $3 是否带 fingerprint（1/0）
+    {
+      printf '== seed-bench：小店档 ≤2,000 SKU ==\n'
+      printf 'db=/tmp/a=b.db\ntier=small\nseed_version=1\nprotected_databases=2\n\n'
+      printf '== 规格与数据量指纹（可直接贴进验收记录） ==\n'
+      printf 'seed_version=1\ntier=small\nspec_products=2000\nspec_variants=10000\n'
+      printf 'spec_categories=12\n%s=166\n' "$2"
+      printf 'products=2000\nvariants=10000\nstatus_active=1900\nstatus_draft=100\n'
+      printf 'inserted_products=2000\ninserted_variants=10000\nskipped_products=0\n'
+      [ "$3" = "1" ] && printf 'fingerprint=0123456789abcdef\n'
+      printf 'table_Product_rows=2000\ntable_Product_sha256=deadbeef\n'
+    } > "$1"
+  }
+
+  mk_seed "$TMPD/m-good" spec_products_per_category 1
+  mt "seed-meta 完整块：五个键都取到值" "0|2000|10000|166|0123456789abcdef" "$(probe_meta "$TMPD/m-good")"
+  mt "seed-meta 值里含 '=' 不被截断（db=/tmp/a=b.db）" "/tmp/a=b.db" "$(seed_get "$TMPD/m-good" db)"
+  mt "seed-meta 里 seed_version 出现两次不误判（取第一个）" "1" "$(seed_get "$TMPD/m-good" seed_version)"
+
+  mk_seed "$TMPD/m-badkey" per_category 1
+  mt "seed-meta 键名写错（per_category）→ 判 rc=2，不是记个空值" "2|2000|10000||0123456789abcdef" "$(probe_meta "$TMPD/m-badkey")"
+
+  mk_seed "$TMPD/m-nofp" spec_products_per_category 0
+  mt "seed-meta 缺 fingerprint → 判 rc=2（绑定不了数据集）" "2|2000|10000|166|" "$(probe_meta "$TMPD/m-nofp")"
+
+  ( SEED_META="$TMPD/不存在的文件"; load_seed_meta >/dev/null 2>&1 ) ; mt "seed-meta 文件不存在 → rc=2" "2" "$?"
+  ( SEED_META=""; load_seed_meta >/dev/null 2>&1 ) ; mt "seed-meta 未给 → rc=0（不算错，META 里写明原因）" "0" "$?"
+
   say ""
   if [ "$failn" -eq 0 ]; then
     say "== 自证通过：${total} 个样本，正确样本绿、每种坏情况各自红在预期断言上 =="
@@ -408,6 +453,68 @@ self_test() {
   say "== 自证失败：${failn}/${total} 个样本没有红在预期断言上 =="
   say "  判定器本身不可信 —— 此时它给出的 PASS 不能作为 AC-12 的证据。"
   return 1
+}
+
+# =============================================================================
+# seed-bench 结论块的解析（`--seed-meta`）
+# -----------------------------------------------------------------------------
+# 为什么要有这一层：**行数相同不代表同一批数据**。两次都是 products=2000 的两个库，
+# 内容可以完全不同；此时两轮压测结论不可横向比较，而人只会去怀疑代码退化了。
+# 所以结论必须和 fingerprint 绑定。
+#
+# 为什么不是一行 awk 就完事（第一版就是那样，然后错了）：
+#   1) 键名必须与 SeedBenchCommand.PrintReport 实际打印的**逐字一致**。第一版这里写
+#      `per_category`，而造数器打的是 `spec_products_per_category` —— 于是 META 里
+#      那一行永远是空的：看着"记录了分类密度"，其实什么都没记，而且**不会报错**。
+#   2) 取不到值时不能打印空字符串了事。给了 `--seed-meta` 却说不出是什么数据，
+#      属于"未验证"，要在**加压前**判 rc=2，而不是压完 30 分钟才发现记录是空的。
+#   3) 值里可能含 `=`（`db=/tmp/a=b.db`），所以按**第一个** `=` 切，不能用 `$2` 了事。
+# =============================================================================
+SM_VERSION=""; SM_PRODUCTS=""; SM_VARIANTS=""; SM_PPC=""; SM_FP=""
+
+seed_get() {  # $1 文件 $2 键 → stdout 值；取不到返回 1（不输出空串冒充成功）
+  local v
+  v=$(awk -F= -v key="$2" '$1==key{ sub(/^[^=]*=/, ""); print; exit }' "$1" 2>/dev/null | tr -d '\r')
+  [ -n "$v" ] || return 1
+  printf '%s' "$v"
+}
+
+# 把 seed-bench 的结论块读进 SM_*；0 = 可用或未给，2 = 给了但不可用（未验证）
+load_seed_meta() {
+  SM_VERSION=""; SM_PRODUCTS=""; SM_VARIANTS=""; SM_PPC=""; SM_FP=""
+  [ -n "$SEED_META" ] || return 0          # 没给不算错：META 里会写明"未给，两轮不可横向比较"
+
+  if [ ! -f "$SEED_META" ]; then
+    printf 'PRECONDITION: --seed-meta 指向的文件不存在：%s → 未验证，不是通过\n' "$SEED_META" >&2
+    printf '  造数时直接把 stdout 存下来：dotnet run --project tools/OpenStore.Tools -- seed-bench --tier %s --db <sqlite> > %s\n' "$TIER" "$SEED_META" >&2
+    return 2
+  fi
+
+  SM_VERSION=$(seed_get  "$SEED_META" seed_version)              || SM_VERSION=""
+  SM_PRODUCTS=$(seed_get "$SEED_META" products)                  || SM_PRODUCTS=""
+  SM_VARIANTS=$(seed_get "$SEED_META" variants)                  || SM_VARIANTS=""
+  SM_PPC=$(seed_get     "$SEED_META" spec_products_per_category) || SM_PPC=""
+  SM_FP=$(seed_get      "$SEED_META" fingerprint)                || SM_FP=""
+
+  # 五个键**一个都不许缺**。
+  # 起初我只硬要求 fingerprint 与 products（"两根腿"），把其余三个记成 `?` —— 自证当场
+  # 把这条判成 WRONG：键名写错时 products 照样在，于是 rc=0、META 里留一个空值，
+  # 正是我要修的那个"看着记录了、其实没记"。**判据不严到能抓住自己写错的键名，
+  # 就等于没有判据**。缺哪个都说明这个文件不是当前 seed-bench 的完整结论块
+  # （贴串／截断／工具是旧版本），三种情况都不该拿它当绑定依据。
+  local miss=""
+  [ -n "$SM_VERSION" ]  || miss="$miss seed_version"
+  [ -n "$SM_PRODUCTS" ] || miss="$miss products"
+  [ -n "$SM_VARIANTS" ] || miss="$miss variants"
+  [ -n "$SM_PPC" ]      || miss="$miss spec_products_per_category"
+  [ -n "$SM_FP" ]       || miss="$miss fingerprint"
+  if [ -n "$miss" ]; then
+    printf 'PRECONDITION: %s 里缺%s → 这不是 seed-bench 的完整结论块 → 未验证，不是通过\n' "$SEED_META" "$miss" >&2
+    printf '  该文件应是 seed-bench 的完整 stdout（含 "== 规格与数据量指纹（可直接贴进验收记录） ==" 一节），五行缺一不可\n' >&2
+    printf '  常见原因：stdout 只重定向了一半／手工只抄了 fp／造数用的是旧版 OpenStore.Tools（先 dotnet build tools/OpenStore.Tools -warnaserror）\n' >&2
+    return 2
+  fi
+  return 0
 }
 
 # =============================================================================
@@ -460,8 +567,22 @@ main() {
   say "   预算：RSS 合计 ≤ ${RSS_BUDGET_MB} MB；TTFB P95 ≤ ${TTFB_P95_MS} ms；三进程 OOM 证据必须干净"
   say "   原始数据：${OUT}    请求明细：${REQLOG}"
 
+  # ---- 数据集绑定：先解析 seed-bench 的结论块，解析不出来就**在加压前**退出 ----
+  # 顺序是有讲究的：这一步必须在 30 分钟压测**之前**做完。压完才发现"记了个空的
+  # fingerprint"，等于把半小时加一次真机窗口一起扔掉，而人只会看到一行空格子。
+  load_seed_meta || exit 2
+
+  # 压测库里**数出来**的行数。它与 seed-bench 声称的 products 是两回事：
+  # 前者是"我现在压的东西"，后者是"造数器以为我压的东西"。两者不等 = 压错库。
+  local DB_SKU DB_ORD
+  DB_SKU=$(docker compose exec -T api sqlite3 /data/openstore.db "select count(*) from Product;" 2>/dev/null | tr -d ' \r')
+  DB_ORD=$(docker compose exec -T api sqlite3 /data/openstore.db "select count(*) from Order;" 2>/dev/null | tr -d ' \r')
+
   # ---- 规格与数据量指纹：结论必须能和"在什么机器、多少数据上跑"绑定 ----
   # 不带指纹的压测结论无法比较：同一份脚本在 8 核开发机与 2C2G 上跑，绿的含金量完全不同。
+  # 键名一律带来源前缀——`db_*` 是本脚本从容器里数出来的，`seed_*` 是 seed-bench 声称的。
+  # 第一版两边都叫 `products`，同一个文件里出现了两行同名键，grep 取第一个：
+  # 谁先谁后取决于写入顺序，等于给后来人埋了一个"看到哪个算哪个"的坑。
   {
     printf 'tier=%s (%s)\n' "$TIER" "$TIER_DESC"
     printf 'time=%s\n' "$TS"
@@ -469,23 +590,32 @@ main() {
     printf 'mem_total=%s\n' "$( (awk '/MemTotal/{printf "%.1fG", $2/1048576}' /proc/meminfo 2>/dev/null) || echo '?' )"
     printf 'rss_budget_mb=%s ttfb_p95_ms=%s\n' "$RSS_BUDGET_MB" "$TTFB_P95_MS"
     printf 'duration_s=%s interval_s=%s conc=%s cold_s=%s\n' "$DUR" "$INTERVAL" "$CONC" "$COLD"
-    local sku ord
-    sku=$(docker compose exec -T api sqlite3 /data/openstore.db "select count(*) from Product;" 2>/dev/null | tr -d ' \r')
-    ord=$(docker compose exec -T api sqlite3 /data/openstore.db "select count(*) from Order;" 2>/dev/null | tr -d ' \r')
-    printf 'products=%s orders=%s\n' "${sku:-?}" "${ord:-?}"
-    # 数据集指纹：**行数相同不代表同一批数据**。两份 products=2000 的数据可以完全不同，
-    # 此时两轮压测结论不可横向比较（先怀疑数据集变了，而不是先怀疑代码退化）。
-    if [ -n "$SEED_META" ] && [ -f "$SEED_META" ]; then
-      local k
-      for k in seed_version products variants per_category fingerprint; do
-        printf '%s=%s\n' "$k" "$(awk -F= -v key="$k" '$1==key{print $2; exit}' "$SEED_META" 2>/dev/null)"
-      done
+    printf 'db_products=%s db_orders=%s\n' "${DB_SKU:-?}" "${DB_ORD:-?}"
+    if [ -n "$SEED_META" ]; then
+      printf 'seed_version=%s\n' "$SM_VERSION"
+      printf 'seed_products=%s seed_variants=%s seed_products_per_category=%s\n' "$SM_PRODUCTS" "$SM_VARIANTS" "$SM_PPC"
+      printf 'seed_fingerprint=%s\n' "$SM_FP"
+      printf 'seed_meta_file=%s\n' "$SEED_META"
     else
-      printf 'seed_version=? variants=? fingerprint=?(未给 --seed-meta：两轮结论不可横向比较)\n'
+      # 空着比编一个强，但必须**写明为什么空**，否则后来人会当成"填了但没值"
+      printf 'seed_version=? seed_products=? seed_variants=? seed_fingerprint=?\n'
+      printf 'seed_meta=未给 --seed-meta：本次结论无法与其它轮次横向比较（先怀疑数据集变了，再怀疑代码退化）\n'
     fi
     printf 'sitemap_urls=%s\n' "$(curl -s --max-time 10 "${BASE}/sitemap.xml" 2>/dev/null | grep -c '<loc>')"
   } > "$META" 2>&1
   say "   规格/数据量指纹：${META}"
+
+  # ---- 对账：数出来的行数 vs 造数器声称的行数 ----
+  # 这一步失败要**立刻**退，不能等到 30 分钟后按 A8 判 P95 —— 压的不是那批数据，
+  # 后面每一个数字都不代表 AC-12 要测的东西。
+  case "$DB_SKU" in ''|*[!0-9]*) DB_SKU="" ;; esac
+  if [ -n "$SM_PRODUCTS" ] && [ -n "$DB_SKU" ] && [ "$SM_PRODUCTS" != "$DB_SKU" ]; then
+    printf 'db_products_mismatch=1 db_products=%s seed_products=%s\n' "$DB_SKU" "$SM_PRODUCTS" >> "$META"
+    printf 'PRECONDITION: 压测库里的商品数（%s）与 --seed-meta 记录（%s，fingerprint=%s）不一致 → 压的不是那批数据 → 未验证，不是通过\n' \
+      "$DB_SKU" "$SM_PRODUCTS" "$SM_FP" >&2
+    printf '  要么库被重建过（换库后没换 --seed-meta），要么 seed-bench 灌的不是这个 /data/openstore.db。先对齐再看性能。\n' >&2
+    exit 2
+  fi
 
   # ---- 压测前的 OOM 基线（增量判定的起点）----
   local RESTARTS_BEFORE

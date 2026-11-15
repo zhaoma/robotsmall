@@ -27,7 +27,7 @@
 # `--list-spaces` 把推导出来的空间导出来，供人审阅（和 check-doc-version-refs.sh 的
 #  --list-exempt 同一思路：结构是事实，白名单是感觉）。
 #
-# ── 判据两条，顺序不可换 ───────────────────────────────────────────────────────
+# ── 判据三条，顺序不可换 ───────────────────────────────────────────────────────
 #   ① 扫到的编号行总数 ≥ --min（默认 85 = 已知分配下界）——先证明"我确实扫到了东西"
 #   ② 同一空间内编号唯一
 # 判据 1 必需的理由：**空集永远无重复**。一个正则写错、或文档把表格从 "> |" 改成 "|"，
@@ -47,11 +47,17 @@
 # 唯一代价：真的删/合并一条变更行时也会红一次。这是**有意的**——编号是永久记录，
 # 该条作废请在描述里标"已作废"并保留编号，而不是把号抽掉（抽掉会让所有 "见 #NN" 静默指错）。
 #
+# 判据 3 比的是**集合**（编号是否 1..N），不是**行序**。行序错位单独记 WARN
+# （NUMBER_OUT_OF_ORDER），不阻断。这条边界是踩出来的：第一版逐位比较行序，于是
+# docs/01 里 "#92 排在 #90 前面"（编号一条不缺）被判成"不连续、缺（无缺失但起始不是 1）"——
+# 原因自相矛盾，而 --list-spaces 同一时刻打印"编号 1..92、重复=无"。门禁和它的审阅通道
+# 说法不一，读的人只会认为门禁坏了。**一个说不清原因的红，最后一定会被关掉。**
+#
 # 用法:
 #   ./scripts/check-change-numbers.sh                # 扫 docs/**/*.md（递归）
 #   ./scripts/check-change-numbers.sh --min 85       # 显式指定下界（下界应只增）
 #   ./scripts/check-change-numbers.sh --list-spaces  # 先看编号空间是怎么划出来的（可审）
-#   ./scripts/check-change-numbers.sh --self-test    # fail-before-pass 自证（3 项）
+#   ./scripts/check-change-numbers.sh --self-test    # fail-before-pass 自证（项数以末行结论为准）
 # 退出码: 0 干净 / 1 有违规 / 2 环境问题
 #
 # 自证结论行契约（与同组脚本一致，最后一行必是二者之一）：
@@ -124,9 +130,11 @@ def scan_spaces(root):
     return spaces
 
 
-def judge(spaces, floor):
-    """判据两条，顺序固定。返回 (失败列表, 扫到的总条数)。"""
+def judge(spaces, floor, warns=None):
+    """判据三条，顺序固定。返回 (失败列表, 扫到的总条数)。不阻断项追加进 warns（若给）。"""
     failures = []
+    if warns is None:
+        warns = []
     total = sum(len(s['rows']) for s in spaces)
 
     # 判据 1：先证明扫到了东西。失败信息必须同时给"扫到多少"和"下界多少"——
@@ -139,23 +147,49 @@ def judge(spaces, floor):
             '若文档确实精简过，用 --min 下调下界并说明原因；若是正则/结构问题，先修扫描。'
             % (total, floor)))
 
-    # 判据 3：每个空间内 1..N 连续。先于判据 2 报告没有意义的多余错误会被抑制：
-    # 有重号时 nums 必然也不等于 1..N，这里跳过（一个病因只报一个码，否则读者要去猜哪个是真因）。
+    # 判据 3：每个空间内的编号**集合**必须是 1..N。先于判据 2 报告没有意义的多余错误会被抑制：
+    # 有重号时集合必然也不等于 1..N，这里跳过（一个病因只报一个码，否则读者要去猜哪个是真因）。
+    #
+    # 为什么是"集合"不是"逐位相等"（第一版就是逐位比，然后错了）：
+    # 逐位相等把**行序**也算进了判据，于是文档里只要有一处顺序错位（#92 插在 #90 前面），
+    # 哪怕编号一条不缺也报红，原因写成"缺（无缺失但起始不是 1）"—— 这句话自相矛盾
+    # （集合明明完整），而 `--list-spaces` 同一时刻打印"编号 1..92、重复=无"。
+    # 同一件事两个通道给出相反的解释，读的人只会认定门禁坏了，然后把它关掉。
+    # 所以拆成两件事：
+    #   集合 ≠ 1..N       → FAIL（缺号/多号 = 真的丢了一条变更记录，不可放过）
+    #   集合 = 1..N 但乱序 → WARN（表不再是时间序 = 抄写痕迹，值得提醒，但不丢记录）
     for sp in spaces:
         nums = [n for n, _ in sp['rows']]
         if len(set(nums)) != len(nums):
             continue
         need = list(range(1, len(nums) + 1))
-        if nums != need:
+        if sorted(nums) != need:
             missing = sorted(set(need) - set(nums))
+            extra = sorted(set(nums) - set(need))
+            detail = []
+            if missing:
+                detail.append('缺 %s' % ', '.join('#%d' % n for n in missing[:10]))
+            if extra:
+                detail.append('多出 %s' % ', '.join('#%d' % n for n in extra[:10]))
             failures.append((
                 'NUMBER_GAP',
                 '%s:%d' % (sp['file'], sp['anchor_line']),
-                '编号空间起点 %s:%d 的编号不连续：%d 条编号最大值 %d，缺 %s。'
+                '编号空间起点 %s:%d 的编号集合不是 1..%d：%d 条编号，%s。'
                 '少扫一段、删行或跳号都会长成这样。编号是永久记录：该条作废就在描述里标"已作废"'
                 '并保留编号，不要抽号（抽掉会让所有"见 #NN"静默指错）。'
-                % (sp['file'], sp['anchor_line'], len(nums), max(nums) if nums else 0,
-                   ', '.join('#%d' % n for n in missing[:10]) or '（无缺失但起始不是 1）')))
+                % (sp['file'], sp['anchor_line'], len(nums), len(nums),
+                   '；'.join(detail) or '（集合与条数不符）')))
+        else:
+            for k in range(len(nums) - 1):
+                if nums[k] > nums[k + 1]:
+                    warns.append((
+                        'NUMBER_OUT_OF_ORDER',
+                        '%s:%d' % (sp['file'], sp['rows'][k][1]),
+                        '变更表行序错位：#%d 排在 #%d 前面（空间起点 %s:%d）。'
+                        '编号本身完整、不丢记录，所以只提醒不阻断；但变更表是时间序，'
+                        '错位多半是"插行插错位置"，下次取号时容易看错末尾。'
+                        % (nums[k], nums[k + 1], sp['file'], sp['anchor_line'])))
+                    break
 
     # 判据 2：同一空间内唯一。跨空间同号是合法的（见文件头取证）。
     for s in spaces:
@@ -177,9 +211,10 @@ def list_spaces(spaces, total):
     for idx, s in enumerate(spaces, 1):
         nums = [n for n, _ in s['rows']]
         dup = sorted(n for n, c in collections.Counter(nums).items() if c > 1)
-        out.append('  #%d  %s:%d   %d 条   编号 %d..%d   重复=%s'
+        order = '单调' if nums == sorted(nums) else '有错位'
+        out.append('  #%d  %s:%d   %d 条   编号 %d..%d   重复=%s   行序=%s'
                    % (idx, s['file'], s['anchor_line'], len(nums), min(nums), max(nums),
-                      dup or '无'))
+                      dup or '无', order))
     out.append('合计 %d 个空间 / %d 条编号（下界 %d）' % (len(spaces), total, min_rows))
     return out
 
@@ -235,6 +270,28 @@ SAMPLE_GAP = """> | # | 变更 |
 > | 1 | 甲 |
 > | 2 | 乙 |
 > | 4 | 丁（#3 被抽掉了） |
+"""
+
+
+# 注入：集合完整但**行序错位**（#3 写在 #2 前面）。docs/01 实际就是这个形态（#92 排在 #90 前）。
+# 第一版判据把行序也算进去，于是这种文档被判"编号不连续、缺（无缺失但起始不是 1）"。
+# 这条样本钉的是：**编号齐了就不得判红**，错位只能出 WARN。
+SAMPLE_ORDER = """> | # | 变更 |
+> |---|---|---|
+> | 1 | 甲 |
+> | 3 | 丙（先写了 #3） |
+> | 2 | 乙 |
+"""
+
+
+# 注入：集合里**多出一个号**（1,2,3,5）。判据要能说清是"多 #5"而不是含糊的"不连续"——
+# 缺号和多号的修法相反：缺号去查漏扫/删行，多号去查上界跨空间了。
+SAMPLE_EXTRA = """> | # | 变更 |
+> |---|---|---|
+> | 1 | 甲 |
+> | 2 | 乙 |
+> | 3 | 丙 |
+> | 5 | 戊（多了 #5） |
 """
 
 
@@ -299,6 +356,30 @@ def self_test():
               '注入编号空洞（1,2,4，缺 #3）→ 红在判据 3：%s'
               % (fails4[0][2].split('。')[0] if fails4 else '未报红'))
 
+        # ---- 方向五：集合完整但行序错位 → 不得判红，只能出 WARN ----
+        # 这条是回归项：没有它，"按集合比"与"按行序比"两种实现在自证里分辨不出来。
+        order_dir = os.path.join(tmp, 'order')
+        os.makedirs(order_dir)
+        write_sample(order_dir, 'order.md', SAMPLE_ORDER)
+        warns5 = []
+        fails5, total5 = judge(scan_spaces(order_dir), floor=3, warns=warns5)
+        codes5w = [c for c, _, _ in warns5]
+        check(not fails5 and codes5w == ['NUMBER_OUT_OF_ORDER'],
+              '注入行序错位（1,3,2，编号一条不缺）→ 判绿 + 1 条 WARN（实得 failures=%s warns=%s）：%s'
+              % (len(fails5), codes5w,
+                 warns5[0][2].split('。')[0] if warns5 else '未出 WARN'))
+
+        # ---- 方向六：多了号 → 红在判据 3，且原因必须点名"多 #5" ----
+        extra_dir = os.path.join(tmp, 'extra')
+        os.makedirs(extra_dir)
+        write_sample(extra_dir, 'extra.md', SAMPLE_EXTRA)
+        fails6, total6 = judge(scan_spaces(extra_dir), floor=4)
+        codes6 = [c for c, _, _ in fails6]
+        msg6 = fails6[0][2] if fails6 else ''
+        check(codes6 == ['NUMBER_GAP'] and '多出 #5' in msg6 and '缺 #4' in msg6,
+              '注入多号（1,2,3,5，4 条）→ 红在判据 3 且点名"缺 #4；多出 #5"：%s'
+              % (msg6.split('。')[0] if msg6 else '未报红'))
+
         # 判据 1 的失败信息必须同时带"扫到多少"和"下界多少"，否则读者无法归因
         check(bool(fails3) and '扫到 0 条' in fails3[0][2] and '下界 85 条' in fails3[0][2],
               '判据 1 的失败信息同时打印扫到条数与下界：%s'
@@ -314,7 +395,8 @@ def self_test():
         print('== 自证失败：%d 项不符合预期' % len(failed))
         return 1
 
-    print('== 自证通过：%d 项（正样本 2 项判绿 / 注入重复红在判据 2 / 形态破坏红在判据 1 / 编号空洞红在判据 3）'
+    print('== 自证通过：%d 项（正样本 2 项判绿 / 注入重复红在判据 2 / 形态破坏红在判据 1 / '
+          '编号空洞红在判据 3 / 行序错位只出 WARN / 多号红在判据 3 且点名）'
           % len(checks))
     return 0
 
@@ -330,13 +412,20 @@ if not os.path.isdir(docs):
 spaces = scan_spaces(docs)
 
 if '--list-spaces' in args:
-    failures, total = judge(spaces, min_rows)
+    warns = []
+    failures, total = judge(spaces, min_rows, warns)
     print('\n'.join(list_spaces(spaces, total)))
+    for code, loc, msg in warns:
+        print('WARN %s: %s' % (loc or 'docs', msg))
     if failures:
         print('\n（当前状态下判据未通过，详见直接运行本脚本的输出）')
     sys.exit(0)
 
-failures, total = judge(spaces, min_rows)
+warns = []
+failures, total = judge(spaces, min_rows, warns)
+
+for code, loc, msg in warns:
+    print('WARN %s: %s' % (loc or 'docs', msg))
 
 if failures:
     for code, loc, msg in failures:
@@ -347,12 +436,17 @@ CHANGE NUMBER: 共 %d 处问题（扫到 %d 条编号 / %d 个空间）
   → 判据 1 失败：扫描本身没生效。先确认表格仍是 "> | N | ..." 形态（本门禁只认引用块表格）。
   → 判据 2 失败：同一编号空间内重号。取号前先在变更表里声明，同轮串行分配；
     已被引用（"见 #NN"）的号不得复用、不得改号——改号会让所有引用静默指错。
+  → 判据 3 失败（NUMBER_GAP）：某空间编号集合不是 1..N，**缺号或多号**。
+    缺号 = 少扫一段/删了行；多号 = 上界超了该空间条数（通常是插行插到了别的空间）。
+    作废一条变更请在描述里标"已作废"并保留编号，不要抽号（抽掉会让"见 #NN"静默指错）。
   → 编号空间是**按结构分段**的（引用块内标题为界），跨空间同号合法。
     用 --list-spaces 查看当前推导结果；若划分不符合预期，调整文档的标题层级，
     不要在脚本里加文件白名单——白名单是"感觉"，结构是"可审阅的事实"。
 """ % (len(failures), total, len(spaces)))
     sys.exit(1)
 
-print('OK: 变更编号无重复（%d 个编号空间 / %d 条编号，下界 %d）' % (len(spaces), total, min_rows))
+print('OK: 变更编号无重复且各空间 1..N 完整（%d 个编号空间 / %d 条编号，下界 %d%s）'
+      % (len(spaces), total, min_rows,
+         '；WARN %d 处（行序错位，不阻断）' % len(warns) if warns else ''))
 sys.exit(0)
 PY
