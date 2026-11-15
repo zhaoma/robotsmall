@@ -17,26 +17,61 @@
 # 用法:
 #   ./scripts/check-doc-version-refs.sh                 # 扫 docs/**/*.md
 #   ./scripts/check-doc-version-refs.sh --list-exempt   # 先看豁免区间（可审，不靠感觉）
+#   ./scripts/check-doc-version-refs.sh --self-test     # 双向自证（正样本必绿 + 注入样本必红在行）
 # 退出码: 0 干净 / 1 有引用 / 2 环境问题
+#
+# 为什么必须有 --self-test：本脚本最容易"假绿"——它的豁免不是跳过某几行，而是**按每个文件的
+# 结构推导豁免区间**。推导错了不会报错，只会少扫一段，于是判绿。所以自证要两个方向都证：
+#   方向一（正样本必绿）：只有"永远红"的门禁才通不过这一条；永远红的门禁结局只有一个——被关掉
+#     （上一轮误杀 47 处就是前兆：处置路径不可执行时，人只剩"关掉它"这一个动作）。
+#   方向二（注入样本必红在那一行）：只证"退出码非 0"不够。红了但不告诉你哪个文件哪一行，
+#     人的第一反应是整个文件重写一遍去猜。
+#
+# 自证结论行契约（全组统一，脚本最后一行必是二者之一，且与退出码对应）：
+#   == 自证通过：<N> 项（<明细>）        → 退出码 0
+#   == 自证失败：<N> 项不符合预期         → 退出码 1
+# 为什么要有结论行：只看退出码时，"拦住问题了"和"检查器自己崩了"是同一个值（非 0）。
+# 判绿必须两个信号同时看——崩掉的脚本不会有结论行。因此本脚本自证过程中若抛异常，
+# 刻意不打印结论行，让堆栈原样暴露（宁可看起来像崩了，也不假装"自证失败"）。
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DOCS=${DOCS_DIR:-$ROOT/docs}
 
-exec python3 - "$DOCS" "$@" <<'PY'
-import io, os, re, sys
+# 注意：${DOCS} 这类变量引用一律带花括号 —— 变量后面紧跟中文全角标点时，
+# 全角标点的首字节会被并进变量名，在 set -u 下直接让脚本退出（"xxx?: unbound variable"）。
+exec python3 - "${DOCS}" "$@" <<'PY'
+import io
+import os
+import re
+import shutil
+import sys
+import tempfile
 
 docs = sys.argv[1]
 args = sys.argv[2:]
 # 只拦"需求版本" v1.x；放过三段式发行版本 v1.4.2 / v1.10.3（那是 Git tag / 镜像 tag，
 # 与需求版本是两套编号。不排除会把发布流水线整条打红——误伤的门禁一定会被关掉）。
-# (?!\.\d) 排除 v1.4.2 的 v1.4；(?<![0-9A-Za-z.]) 排除 xv1.4 / 1.v1.4
-PAT = re.compile(r'(?<![0-9A-Za-z.])v1\.\d+(?!\.\d)')
-if not os.path.isdir(docs):
-    print('找不到 docs 目录: %s' % docs, file=sys.stderr); sys.exit(2)
+# 判法：先抓"v1."开头的最长点分段，再要求命中串**恰好一个点**才是需求版本。
+#
+# 为什么不用正则负向断言 `v1\.\d+(?!\.\d)`：\d+ 是贪婪但可回溯，遇到 v1.10.3 时
+# \d+ 先取 "10" 被 (?!\.\d) 否掉，回溯取 "1" 反而通过，于是 **v1.10.3 被判成 v1.1**。
+# 这个 bug 是 --self-test 的"三段式发行版本不得误伤"那条正样本抓出来的（v1.4.2 侥幸不触发，
+# 因为单字符没有可回溯的退路）——典型的一旦误杀发布流水线、人就关掉门禁的那类问题。
+PAT = re.compile(r'(?<![0-9A-Za-z.])v1\.\d+(?:\.\d+)*')
+
+
+def is_requirement_version(text):
+    """恰好两段（v1.10）才是需求版本；三段及以上（v1.10.3）是发行 tag，放过。"""
+    return text.count('.') == 1
+
+
+TRACE_TITLE = re.compile(r'变更记录|附录\s*B|作废|台账|追溯')
+
 
 def read(p):
     return io.open(p, encoding='utf-8', errors='replace').read().split('\n')
+
 
 def ranges_for_file(lines):
     """豁免区间靠结构标记推导，不硬编码行号（文档会一直变长）。
@@ -70,7 +105,7 @@ def ranges_for_file(lines):
                 if cur_start is not None:
                     rs.append((cur_start, i - 1, '追溯区（变更记录 / 附录 B / 作废台账）'))
                     cur_start = None
-                if re.search(r'变更记录|附录\s*B|作废|台账|追溯', title):
+                if TRACE_TITLE.search(title):
                     cur_start = i
             continue
     if cur_start is not None:
@@ -78,43 +113,211 @@ def ranges_for_file(lines):
 
     return rs
 
+
 def in_ranges(i, rs):
     return any(a <= i <= b for a, b, _ in rs)
 
-if '--list-exempt' in args:
-    for f in sorted(os.listdir(docs)):
-        if not f.endswith('.md'):
+
+def md_files(root):
+    files = []
+    for dirpath, _, names in os.walk(root):
+        for n in sorted(names):
+            if n.endswith('.md'):
+                files.append(os.path.join(dirpath, n))
+    files.sort()
+    return files
+
+
+def scan(root):
+    """扫描 root 下所有 .md，返回 (违规处数, 报告行列表)。正文/自证共用同一份逻辑。"""
+    total, report = 0, []
+    for f in md_files(root):
+        lines = read(f)
+        rs = ranges_for_file(lines)
+        for i, l in enumerate(lines, 1):
+            if in_ranges(i, rs):
+                continue
+            for m in PAT.finditer(l):
+                if not is_requirement_version(m.group(0)):
+                    continue
+                total += 1
+                s = max(0, m.start() - 40)
+                e = min(len(l), m.end() + 40)
+                ctx = ('…' if s else '') + l[s:e].strip() + ('…' if e < len(l) else '')
+                rel = f.replace(root + os.sep, 'docs/')
+                report.append('%s:%d 引用了 %s\n     上下文：%s' % (rel, i, m.group(0), ctx))
+                break   # 一行只报一次，避免同一行刷屏
+    return total, report
+
+
+def list_exempt(root):
+    """导出每个文件的豁免区间（可审阅的事实，不是白名单）。返回输出行列表。"""
+    out = []
+    for name in sorted(os.listdir(root)):
+        if not name.endswith('.md'):
             continue
-        rs = ranges_for_file(read(os.path.join(docs, f)))
+        rs = ranges_for_file(read(os.path.join(root, name)))
         if not rs:
-            print('文件: docs/%s   （无豁免，全文视为正文）' % f)
+            out.append('文件: docs/%s   （无豁免，全文视为正文）' % name)
             continue
-        print('文件: docs/%s' % f)
+        out.append('文件: docs/%s' % name)
         for a, b, why in rs:
-            print('  豁免 %d:%d  %s' % (a, b, why))
-    print('正则: %s' % PAT.pattern)
+            out.append('  豁免 %d:%d  %s' % (a, b, why))
+    out.append('正则: %s   （仅两段式算需求版本：命中串点数 != 1 的放过，那是发行 tag）' % PAT.pattern)
+    return out
+
+
+# ---------------------------------------------------------------- 双向自证
+# 样本一律写在临时目录，绝不碰真实 docs：自证要是能改到被测对象，它本身就是风险。
+SAMPLE_OK = """# 标题
+> 版本：v1.5（需求基线）
+
+## 1. 正文小节
+（无版本号）
+
+## 变更记录
+| 版本 | 说明 |
+| v1.5 | 初稿 |
+"""
+
+# 附录 B / 作废台账：历史误杀 47 处的那一类，必须整段豁免
+SAMPLE_OK_APPENDIX = """# 附录样本
+> 版本：v1.5
+
+## 1. 正文小节
+（无版本号）
+
+## 附录 B 作废台账
+| v1.3 | 已作废 |
+| v1.10 #47 | 结论已合并到 AC-11 |
+"""
+
+# 三段式发行版本（Git tag / 镜像 tag）不得误伤，否则会把发布流水线整条打红
+SAMPLE_OK_SEMVER = """# 发行版样本
+> 版本：v1.5
+
+## 1. 正文小节
+镜像 tag 为 v1.4.2，Git tag 为 v1.10.3。
+"""
+
+# 注入样本：违规**必须在正文中间**（第 8 行），且文件头/变更记录的合法版本号都在
+SAMPLE_BAD = """# 标题
+> 版本：v1.5（需求基线）
+
+## 1. 正文小节
+（无版本号）
+
+## 2. 正文小节
+（本节结论依据需求 v1.9 定稿并锁定。）
+
+## 变更记录
+| 版本 | 说明 |
+| v1.5 | 初稿 |
+"""
+BAD_LINE = 8
+
+
+def write_sample(root, name, text):
+    path = os.path.join(root, name)
+    io.open(path, 'w', encoding='utf-8').write(text)
+    return path
+
+
+def self_test():
+    checks = []          # (是否通过, 明细)
+
+    def check(ok, detail):
+        checks.append((bool(ok), detail))
+
+    tmp = tempfile.mkdtemp(prefix='docverrefs-selftest-')
+    try:
+        # ---- 方向一：正样本必须判绿 ----
+        ok_dir = os.path.join(tmp, 'green')
+        os.makedirs(ok_dir)
+        write_sample(ok_dir, 'ok.md', SAMPLE_OK)
+
+        total, report = scan(ok_dir)
+        check(total == 0 and not report,
+              '正样本（版本号仅在文件头 + 变更记录）判绿：%d 处违规' % total)
+
+        # 绿的原因必须真的是"结构推导出的豁免"，不是"正则漏了"——
+        # 这一条专治"豁免推导错了，少扫一段，于是静默判绿"这种假绿。
+        rs = ranges_for_file(read(os.path.join(ok_dir, 'ok.md')))
+        has_head = any(why.startswith('文件头') and a <= 2 <= b for a, b, why in rs)
+        has_trace = any(why.startswith('追溯区') and a <= 9 <= b for a, b, why in rs)
+        body_scanned = not in_ranges(5, rs)
+        check(has_head and has_trace and body_scanned,
+              '正样本的豁免区间由结构推导：文件头 %s / 追溯区 %s / 正文第 5 行仍被扫 → %s'
+              % ([r for r in rs if r[2].startswith('文件头')],
+                 [r for r in rs if r[2].startswith('追溯区')],
+                 '是' if body_scanned else '否'))
+
+        # ---- 方向一（续）：附录 B / 作废台账 整段豁免 ----
+        ap_dir = os.path.join(tmp, 'green-appendix')
+        os.makedirs(ap_dir)
+        write_sample(ap_dir, 'appendix.md', SAMPLE_OK_APPENDIX)
+        total_ap, _ = scan(ap_dir)
+        check(total_ap == 0, '附录 B / 作废台账段内版本号被整段豁免：%d 处违规' % total_ap)
+
+        # ---- 方向一（续）：三段式发行版本不误杀 ----
+        sv_dir = os.path.join(tmp, 'green-semver')
+        os.makedirs(sv_dir)
+        write_sample(sv_dir, 'semver.md', SAMPLE_OK_SEMVER)
+        total_sv, _ = scan(sv_dir)
+        check(total_sv == 0, '三段式发行版本 v1.4.2 / v1.10.3 不误杀：%d 处违规' % total_sv)
+
+        # ---- 方向二：注入样本必须红 ----
+        bad_dir = os.path.join(tmp, 'red')
+        os.makedirs(bad_dir)
+        write_sample(bad_dir, 'bad.md', SAMPLE_BAD)
+        total_bad, report_bad = scan(bad_dir)
+        check(total_bad == 1, '注入样本（正文中间 v1.9）判红：%d 处违规' % total_bad)
+
+        # 红必须红在该行：给文件 + 行号，而不是只给退出码
+        located = bool(report_bad) and re.search(r'bad\.md:%d\b' % BAD_LINE, report_bad[0]) is not None
+        check(located,
+              '注入样本定位到 bad.md:%d（行号与文件都在）：%s'
+              % (BAD_LINE, report_bad[0].split('\n')[0] if report_bad else '无报告'))
+
+        # 上下文要带出违规原文，人能一眼看懂该改哪句
+        contextual = bool(report_bad) and 'v1.9' in report_bad[0] and '定稿并锁定' in report_bad[0]
+        check(contextual, '注入样本的上下文含违规原文与所在句：%s'
+              % (report_bad[0].split('上下文：')[-1] if report_bad else '无报告'))
+
+        # ---- 豁免必须可审阅：--list-exempt 走同一份结构推导 ----
+        listed = list_exempt(ok_dir)
+        check(any('豁免' in l and '文件头' in l for l in listed),
+              '--list-exempt 可导出正样本的豁免区间：%s'
+              % (next((l.strip() for l in listed if '文件头' in l), '未导出')))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    failed = [d for ok, d in checks if not ok]
+    for ok, detail in checks:
+        print('  %s  %s' % ('ok  ' if ok else 'FAIL', detail))
+
+    if failed:
+        print('== 自证失败：%d 项不符合预期' % len(failed))
+        return 1
+
+    print('== 自证通过：%d 项（正样本 4 项判绿、注入样本 3 项红在 %d 行、豁免导出 1 项可审）'
+          % (len(checks), BAD_LINE))
+    return 0
+
+
+if '--self-test' in args:
+    # 刻意不 catch 异常：崩掉的脚本不打印结论行，调度方据此能区分"拦住问题了"与"检查器自己崩了"。
+    sys.exit(self_test())
+
+if not os.path.isdir(docs):
+    print('找不到 docs 目录: %s' % docs, file=sys.stderr)
+    sys.exit(2)
+
+if '--list-exempt' in args:
+    print('\n'.join(list_exempt(docs)))
     sys.exit(0)
 
-files = []
-for dirpath, _, names in os.walk(docs):
-    for n in sorted(names):
-        if n.endswith('.md'):
-            files.append(os.path.join(dirpath, n))
-files.sort()
-
-total, report = 0, []
-for f in files:
-    lines = read(f)
-    rs = ranges_for_file(lines)
-    for i, l in enumerate(lines, 1):
-        if in_ranges(i, rs):
-            continue
-        for m in PAT.finditer(l):
-            total += 1
-            s = max(0, m.start() - 40); e = min(len(l), m.end() + 40)
-            ctx = ('…' if s else '') + l[s:e].strip() + ('…' if e < len(l) else '')
-            report.append('%s:%d 引用了 %s\n     上下文：%s' % (f.replace(docs + os.sep, 'docs/'), i, m.group(0), ctx))
-            break   # 一行只报一次，避免同一行刷屏
+total, report = scan(docs)
 
 if total:
     print('\n'.join(report))
