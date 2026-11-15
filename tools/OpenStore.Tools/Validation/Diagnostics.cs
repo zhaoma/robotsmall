@@ -12,6 +12,13 @@ internal static class ErrorCodes
     public const string RefNotFound = "REF_NOT_FOUND";
     public const string ThemeNotFound = "THEME_NOT_FOUND";
     public const string LayoutNotSupported = "LAYOUT_NOT_SUPPORTED";
+
+    /// <summary>token 键形态非法（不是扁平点分小写）。与 <see cref="TokenKeyMismatch"/> 的区别：
+    /// 这个是"一个键自己写错了"，那个是"两个文件的键集对不上"。</summary>
+    public const string TokenKeyInvalid = "TOKEN_KEY_INVALID";
+
+    /// <summary>跨文件键集不一致：模板的 themeTokens 预设里有主题白名单没有的键。
+    /// token 侧已收敛为单一真源，那里不再可能出现本码。</summary>
     public const string TokenKeyMismatch = "TOKEN_KEY_MISMATCH";
     public const string FormatVersionUnsupported = "FORMAT_VERSION_UNSUPPORTED";
 

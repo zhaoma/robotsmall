@@ -55,7 +55,11 @@ internal static partial class ThemeAssets
 
         if (tokenKeys.Count == 0)
         {
-            run.Add(ErrorCodes.TokenKeyMismatch, relativePath, "/properties", "no token keys declared (properties is empty)");
+            run.Add(
+                ErrorCodes.SchemaInvalid,
+                relativePath,
+                "/properties",
+                "no token keys declared (properties is empty): the merchant would open the theme editor and find nothing to edit");
         }
 
         return new TokenWhitelist(tokenKeys);

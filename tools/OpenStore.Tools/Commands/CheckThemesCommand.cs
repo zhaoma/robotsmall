@@ -147,8 +147,10 @@ internal static class CheckThemesCommand
 
         var tokensSchemaRelativeForDiagnostics = RepoRoot.Relative(repoRoot, tokensSchemaFile);
         var tokensSchemaRoot = JsonIo.TryLoad(tokensSchemaFile, tokensSchemaRelativeForDiagnostics, run);
-        var tokenWhitelist = ThemeAssets.ReadTokenWhitelist(tokensSchemaRoot, tokensSchemaRelativeForDiagnostics, run);
-        var tokensSchemaFileName = Path.GetFileName(tokensSchemaFile);
+
+        // 只为拿到"properties 为空"这条诊断：重复源下的键集比对已经不存在，
+        // 但"一个 token 都没声明"仍然是个坏主题（商家进后台看不到任何可调项）。
+        ThemeAssets.ReadTokenWhitelist(tokensSchemaRoot, tokensSchemaRelativeForDiagnostics, run);
 
         // ---- ② 每个声明可插入的区块，必须有 props schema ----
         // 方向是"枚举 → props"：反向（props 里有、枚举里没有）不报 —— 那是没人能插入的死 schema，
@@ -189,31 +191,22 @@ internal static class CheckThemesCommand
         // ---- ④ tokens 键形态，并校验默认值本身符合各自 schema ----
         var tokens = ThemeAssets.ReadDefaultsFromSchema(tokensSchemaFile, tokensSchemaRelativeForDiagnostics, run);
 
-        var declaredKeys = tokenWhitelist.TokenKeys.ToHashSet(StringComparer.Ordinal);
-
         foreach (var (key, _) in tokens)
         {
             if (!ThemeAssets.IsWellFormedTokenKey(key))
             {
                 run.Add(
-                    ErrorCodes.TokenKeyMismatch,
+                    ErrorCodes.TokenKeyInvalid,
                     tokensSchemaRelativeForDiagnostics,
                     JsonIo.Child(string.Empty, key),
                     $"token key \"{key}\" must be dotted lowercase matching {HostContract.TokenKeyPattern}");
             }
         }
 
-        // 键集"完全一致"这条在单一真源下天然成立（白名单和默认值来自同一个 properties），
-        // 故此处的 Except 只剩防御性意义：它能抓到"properties 里某键没有 default"之外的
-        // 另一类漂移 —— 例如将来把默认值抽到独立的 values 文件时忘了同步。
-        foreach (var missing in declaredKeys.Except(tokens.Select(pair => pair.Key).ToHashSet(StringComparer.Ordinal)).OrderBy(key => key, StringComparer.Ordinal))
-        {
-            run.Add(
-                ErrorCodes.TokenKeyMismatch,
-                tokensSchemaRelativeForDiagnostics,
-                JsonIo.Child("/properties", missing),
-                $"token key \"{missing}\" is declared in {tokensSchemaFileName} but has no usable default value");
-        }
+        // 这里刻意**没有**"白名单键集 vs 默认值键集"的比对：
+        // 单一真源下两者是同一个 properties，比对恒等；而"某键没有 default"已由
+        // ReadDefaultsFromSchema 报 TOKEN_DEFAULT_MISSING。再比一次只会让同一个问题
+        // 出两个码，让人以为有两处要修。
 
         ThemeAssets.ValidateTokenValues(tokensSchemaRoot, tokensSchemaRelativeForDiagnostics, tokens, run);
     }
