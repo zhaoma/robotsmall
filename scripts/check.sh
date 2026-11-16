@@ -177,6 +177,16 @@ LOGDIR="$(mktemp -d)"
 # 但报错信息里的路径就是人要去核对的东西，不该带噪声）
 LOCK_ROOT="${CHECK_LOCK_DIR:-${TMPDIR:-/tmp}}"
 LOCK_ROOT="${LOCK_ROOT%/}"
+
+# 锁根目录可能还不存在（`CHECK_LOCK_DIR` 常被指到一个新目录，比如 worktree 隔离用）。
+# `mkdir "$LOCKDIR"` 是**非递归**的：父目录不存在时它失败，而失败会被下面的逻辑
+# 读成"锁已被占"，于是打印「可能有第三个实例刚抢到 / 这不是脚本故障，是并发」——
+# **那是一句没核过的因果**：根本没有并发，是这个目录没被建出来。
+# 实测（本仓）：`CHECK_LOCK_DIR=/tmp/os-lock-lead-$$`（全新目录）连续两次 rc=2，
+# 而两次都只有这一个进程。而"隔离锁目录"正是跑 worktree 时的推荐做法 ——
+# 也就是说这条缺陷恰好挡在它自己的推荐用法上。
+mkdir -p "$LOCK_ROOT" 2>/dev/null
+
 LOCKDIR="$LOCK_ROOT/openstore-check.lock"
 LOCK_STALE_SECONDS="${CHECK_LOCK_STALE_SECONDS:-1800}"
 LOCK_HELD=0
@@ -236,8 +246,15 @@ acquire_lock() {
   fi
 
   {
-    printf 'LOCKED: 回收过期锁后仍抢不到（%s），可能有第三个实例刚抢到 → rc=2\n' "$LOCKDIR"
-    printf '  这不是脚本故障，是并发。重跑一次即可。\n'
+    # 先分清"抢不到"和"根本建不出来"：两者的处置完全相反（前者等、后者改环境），
+    # 而它们在上一条信息里共用同一句话 —— 那是把两个不同的病因报成一个。
+    if [ ! -d "$LOCK_ROOT" ] || [ ! -w "$LOCK_ROOT" ]; then
+      printf 'LOCKED: 锁根目录不可用（%s 不存在或不可写）→ rc=2\n' "$LOCK_ROOT"
+      printf '  这不是并发：`mkdir` 建不出子目录。检查 CHECK_LOCK_DIR / TMPDIR 的权限。\n'
+    else
+      printf 'LOCKED: 回收过期锁后仍抢不到（%s），可能有第三个实例刚抢到 → rc=2\n' "$LOCKDIR"
+      printf '  这不是脚本故障，是并发。重跑一次即可。\n'
+    fi
     printf 'GATE FAILED: check_lock (race)\n'
   } >&2
   exit 2
