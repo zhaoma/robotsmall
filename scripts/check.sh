@@ -350,6 +350,7 @@ if [ "$MODE" = "list" ]; then
   step 22 ledger_landing      "台账裁决的落点在正文里真的提过（L1~L5，含棘轮）"
   step 23 migration_checks    "配置声明的 CHECK 必须在迁移里真的被创建（含自证）"
   step 24 gate_self_test      "门禁自身的退出码与明细渲染自证（不跑构建、不占锁）"
+  step 25 seo_tc_coverage     "每个 S 档都被一条 TC 用例行认领（文档侧）"
   exit 0
 fi
 
@@ -546,8 +547,10 @@ if [ "${goto_summary:-0}" != "1" ]; then
   # 产物，属自证（同 `%an` / `rc` / `mtime`）。
   # 这条是它今天的实机来源：M1 目录层提交后 `CK_ProductCategory_IsPrimary_Bit`
   # 只落在 Configuration 与快照里，靠人翻才被看见。
-  # 自证先跑：5 条样本（一致/缺/只在 Designer/配置为空/迁移目录不存在），
-  # 其中"只在 Designer 里"那条专门证明"排除 Designer"真的生效。
+  # 自证先跑：8 条样本（一致 / 缺 / 只在 Designer / 配置为空 / 迁移目录不存在 /
+  # 抽取三形态 / 表达式不一致 / Up 一致而 Down 不同），其中"只在 Designer 里"那条
+  # 专门证明"排除 Designer"真的生效，"Up 一致而 Down 不同"那条证明 C3 不取最后一次出现。
+  # （这里原本写"5 条"，在 C3 落地后就成了错的 —— 数字写进句子就会漂，改为不写序号只说类型。）
   run_step 23 migration_checks "配置声明的 CHECK 在迁移里被创建" \
     bash -c './scripts/check-migration-checks.sh --self-test || exit $?
              d=$(mktemp -d) || exit 2
@@ -569,6 +572,17 @@ fi
 # 位置在 `--list` 的 `exit 0` 之后、清单对账之前：`--list` 不执行它，对账要看得见它。
 run_step 24 gate_self_test "门禁自身的退出码与明细渲染自证" \
   ./scripts/check.sh --self-test
+
+# ---- 25 S 档有没有被 TC 用例行认领 -------------------------------------------
+# **这条是被它自己抓出来的**：脚本写完、提交了，却没有接进任何门禁（`check.sh` /
+# `ci-gate.sh` / `verify-gates.sh` / workflow 全都没有它）。第一次手工跑就是红的：
+#   FAIL  S5 没有被 docs/06 的任何一条 TC 用例行引用
+# 而 `docs/06` 里 S5 出现在三张表里（状态表 / 载体表 / §6.1.1 核对单），唯独没有一条
+# **TC 用例行**的覆盖列写着它 —— "文档里提到过"和"有用例认领"是两件事。
+# 这正是第 24 步注释里那个词的第二个实例：**孤儿判据**。所以它必须进门禁，
+# 否则它发现的每一条缺口都只有手工跑的时候才看得见。
+run_step 25 seo_tc_coverage "每个 S 档都被一条 TC 用例行认领（文档侧）" \
+  ./scripts/check-seo-tc-coverage.sh
 
 # ---- 清单自证：--list 声明 == 实跑处理 -------------------------------------
 # 步数写死连续错过三次（15→16 步时没跟着改、加 17、加 18）。根因不是"忘了改那个数字"：
