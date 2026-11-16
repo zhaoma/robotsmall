@@ -161,7 +161,13 @@ internal static class SeedBenchCommand
 
         // 这一项的**成立范围**必须跟着数据一起打印，不能只写在文档里：
         // 报告一旦被摘出来单独转发，"每分类 500" 会被直接读成"分类页指标已达标"。
-        Console.WriteLine("category_check_scope=slug-segment（M0 无 ProductCategory 表；只证明列表数据量，不证明分类 join 成本）");
+        //
+        // 措辞里**不许写"M0 无 ProductCategory 表"**：那张表已经随 M1 目录迁移建好了
+        // （ad65e6b）。现在口径还是 slug 段的真实原因是**本造数器没写那两张表**，
+        // 而不是表不存在 —— 前者是"我们的活没干完"，后者是"平台还没有这个能力"，
+        // 两者的到期日不同，混在一句里会让下一个读的人等错东西。
+        Console.WriteLine("category_check_scope=slug-segment（原因不是\"表不存在\"：Category/ProductCategory 已随 M1 目录迁移建表；" +
+                          "是本造数器还没写这两张表 ⇒ 分类归属未进库，join 成本仍未被证明）");
 
         // 「每分类 500」只描述**直属**成员语义。而 AC-12 量的是分类页，分类页有两种都合法的
         // 成员语义（02 §4.9 第 ② 行两条路都在用）：直属 `WHERE CategoryId=?`、子树 `Path LIKE`。
