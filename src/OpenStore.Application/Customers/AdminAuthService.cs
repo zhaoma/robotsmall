@@ -61,13 +61,19 @@ public sealed class AdminAuthService(
         await users.SaveAsync(user, ct).ConfigureAwait(false);
 
         var token = SessionToken.Generate();
+
+        // CSRF 秘钥与会话令牌必须是两个独立随机值：一旦复用同一个值，
+        // 攻击者只要拿到其中一个（例如从日志里看到 CSRF 头）就同时掌握了会话令牌。
+        var csrfToken = SessionToken.Generate();
+
         var session = Session.Create(
             SessionToken.Hash(token),
             SessionActorType.Admin,
             user.Id,
             now,
             AdminSessionPolicy.IdleTimeout,
-            AdminSessionPolicy.AbsoluteTimeout);
+            AdminSessionPolicy.AbsoluteTimeout,
+            csrfHash: SessionToken.Hash(csrfToken));
 
         await sessions.CreateAsync(session, ct).ConfigureAwait(false);
 
@@ -77,7 +83,8 @@ public sealed class AdminAuthService(
             user.DisplayName,
             user.Role,
             Permissions.ForRole(user.Role),
-            token);
+            token,
+            csrfToken);
     }
 
     /// <summary>登出：撤销会话。幂等——token 不存在或已撤销都不报错。</summary>

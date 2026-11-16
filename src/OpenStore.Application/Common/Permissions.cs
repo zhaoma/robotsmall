@@ -44,6 +44,16 @@ public static class Permissions
     /// <summary>分类/属性·读。Admin ✅ / Staff ✅。</summary>
     public const string TaxonomyRead = "perm:taxonomy.read";
 
+    // ---- Inventory（库存）----
+    /// <summary>库存·读（列表与流水）。Admin ✅ / Staff ✅。</summary>
+    public const string InventoryRead = "perm:inventory.read";
+
+    /// <summary>
+    /// 库存·调整（手工改在库数量）。Admin ✅ / Staff ✅（US-E8-02「可改库存」）。
+    /// 与 <see cref="InventoryRead"/> 分开：这是会被审计追责的写操作，读权限不该隐含它。
+    /// </summary>
+    public const string InventoryAdjust = "perm:inventory.adjust";
+
     /// <summary>
     /// 全部权限点。顺序与分组无关，只用于注册授权策略与门禁校验。
     /// </summary>
@@ -61,6 +71,8 @@ public static class Permissions
         CatalogRead,
         CatalogWrite,
         TaxonomyRead,
+        InventoryRead,
+        InventoryAdjust,
     };
 
     /// <summary>

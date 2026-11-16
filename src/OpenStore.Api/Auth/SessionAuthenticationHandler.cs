@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
@@ -36,6 +37,17 @@ public sealed class SessionAuthenticationHandler(
 
     public const string SessionCookieName = "os_admin_sid";
 
+    /// <summary>会话 CSRF 秘钥哈希的 Claim 类型（供 <c>AdminCsrfMiddleware</c> double-submit 比对）。</summary>
+    /// <remarks>
+    /// 放在 Claim 上而不是让中间件再查一次库：处理器每个请求都已经取到 <c>Session</c> 实体，
+    /// 再查一次是纯浪费。该 Claim <b>不会</b>被写进 Cookie —— 本处理器只 <c>Authenticate</c>、
+    /// 从不 <c>SignIn</c>，ticket 只活在本次请求的内存里。
+    /// </remarks>
+    public const string CsrfHashClaimType = "os:csrf";
+
+    /// <summary>会话到期时间的 Claim 类型（供 <c>/auth/me</c> 返回 <c>sessionExpiresAt</c>）。</summary>
+    public const string SessionExpiresAtClaimType = "os:session_expires_at";
+
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         if (!Request.Cookies.TryGetValue(SessionCookieName, out var token) || string.IsNullOrWhiteSpace(token))
@@ -70,6 +82,19 @@ public sealed class SessionAuthenticationHandler(
             new(ClaimTypes.Name, admin.DisplayName),
             new(ClaimTypes.Role, admin.Role.ToString()),
         };
+
+        // 会话到期时间：节流写意味着 DB 里的 IdleExpiresAt 可能还没延到本次请求，
+        // 因此取"本地值"与"now + idle"的较大者，避免 /auth/me 返回一个已经过去的时间点。
+        var sessionExpiresAt = session.IdleExpiresAt > now
+            ? session.IdleExpiresAt
+            : now + AdminSessionPolicy.IdleTimeout;
+
+        claims.Add(new Claim(SessionExpiresAtClaimType, sessionExpiresAt.ToString("O", CultureInfo.InvariantCulture)));
+
+        if (!string.IsNullOrEmpty(session.CsrfHash))
+        {
+            claims.Add(new Claim(CsrfHashClaimType, session.CsrfHash));
+        }
 
         foreach (var permission in Permissions.ForRole(admin.Role))
         {

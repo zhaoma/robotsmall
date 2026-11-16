@@ -45,6 +45,10 @@ public sealed class DomainExceptionMiddleware(RequestDelegate next, ILogger<Doma
         ["AUTH_FORBIDDEN"] = StatusCodes.Status403Forbidden,
         ["AUTH_CSRF_INVALID"] = StatusCodes.Status403Forbidden,
 
+        // ---- 404 不存在 ----
+        // 用它而不是裸 Results.NotFound()：越权也走 404（403 等于确认资源存在），且错误形状与其它错误一致
+        ["CATALOG_NOT_FOUND"] = StatusCodes.Status404NotFound,
+
         // ---- 409 状态冲突（请求没错，是当前状态不允许）----
         ["INSUFFICIENT_STOCK"] = StatusCodes.Status409Conflict,
         ["STOCK_CHANGED_RETRY"] = StatusCodes.Status409Conflict,
@@ -71,6 +75,7 @@ public sealed class DomainExceptionMiddleware(RequestDelegate next, ILogger<Doma
         [StatusCodes.Status400BadRequest] = "提交内容有误",
         [StatusCodes.Status401Unauthorized] = "请重新登录",
         [StatusCodes.Status403Forbidden] = "无权访问",
+        [StatusCodes.Status404NotFound] = "未找到",
         [StatusCodes.Status409Conflict] = "当前状态不允许该操作",
         [StatusCodes.Status423Locked] = "账号已临时锁定",
         [StatusCodes.Status429TooManyRequests] = "请求太频繁",

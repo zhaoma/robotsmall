@@ -11,7 +11,8 @@ public sealed record AdminLoginSuccess(
     string DisplayName,
     AdminRole Role,
     IReadOnlyList<string> Permissions,
-    string SessionToken) : AdminLoginResult;
+    string SessionToken,
+    string CsrfToken) : AdminLoginResult;
 
 public enum AdminLoginFailureReason
 {

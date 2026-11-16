@@ -47,14 +47,24 @@ public sealed class SqliteSessionRepository(StoreDbContext db) : ISessionReposit
             return false;
         }
 
-        var affected = await db.Sessions
-            .Where(s => s.TokenHash == tokenHash && s.LastSeenAt < throttleBefore)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(s => s.LastSeenAt, now)
-                .SetProperty(s => s.IdleExpiresAt, newIdleExpiresAt), ct)
+        // 为什么不用 ExecuteUpdateAsync：SQLite provider 无法翻译 DateTimeOffset 的比较
+        // （LastSeenAt < throttleBefore），整条语句会抛“could not be translated”，
+        // 结果是**登录后每个请求都 500**。这里改为读-改-存：多一次往返，但跨 provider 正确。
+        // 并发下两个请求可能都通过节流判定，对 LastSeenAt 这类"最后一次活跃时间"无实质影响。
+        var record = await db.Sessions
+            .FirstOrDefaultAsync(s => s.TokenHash == tokenHash, ct)
             .ConfigureAwait(false);
 
-        return affected > 0;
+        if (record is null || record.LastSeenAt >= throttleBefore)
+        {
+            return false;
+        }
+
+        record.LastSeenAt = now;
+        record.IdleExpiresAt = newIdleExpiresAt;
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        return true;
     }
 
     public async Task RevokeAsync(string tokenHash, DateTimeOffset now, string reason, CancellationToken ct)
