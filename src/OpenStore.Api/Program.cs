@@ -40,10 +40,18 @@ builder.Services.AddDbContext<StoreDbContext>(options => options.UseSqlite(conne
 builder.Services.AddScoped<IProductRepository, SqliteProductRepository>();
 builder.Services.AddScoped<IProductAdminRepository, SqliteProductAdminRepository>();
 builder.Services.AddScoped<IAdminProductQuery, SqliteAdminProductQuery>();
+builder.Services.AddScoped<IStockRepository>(sp => new SqliteStockRepository(
+    sp.GetRequiredService<StoreDbContext>(),
+    sp.GetRequiredService<IClock>(),
+    builder.Configuration.GetValue("Inventory:LowStockThreshold", SqliteStockRepository.DefaultLowStockThreshold)));
 builder.Services.AddScoped<IAdminUserRepository, SqliteAdminUserRepository>();
 builder.Services.AddScoped<ISessionRepository, SqliteSessionRepository>();
 builder.Services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
 builder.Services.AddSingleton<IClock, UtcClock>();
+builder.Services.AddHttpContextAccessor();
+
+// 当前身份：只从 ClaimsPrincipal 读（ICurrentUser 是"这是谁"的唯一入口，后端设计 §6.5）
+builder.Services.AddScoped<ICurrentUser, HttpCurrentUser>();
 
 // ---- 应用层用例 ----
 builder.Services.AddScoped<StorefrontProductQueryService>();
@@ -77,12 +85,18 @@ var app = builder.Build();
 app.UseMiddleware<DomainExceptionMiddleware>();
 
 app.UseAuthentication();
+
+// CSRF 防护：必须在 UseAuthentication 之后（要读会话 Claim）、UseAuthorization 之前
+// （无权限的请求没必要再走一遍授权）。后端设计 §6.6：Admin 端 Origin 校验 + double-submit。
+app.UseMiddleware<AdminCsrfMiddleware>();
+
 app.UseAuthorization();
 
 app.MapHealthEndpoints();
 app.MapStorefrontProductEndpoints();
 app.MapAdminProductEndpoints();
 app.MapAdminCategoryEndpoints();
+app.MapInventoryAdminEndpoints();
 app.MapAdminAuthEndpoints();
 
 // 开发期自动迁移：让 `dotnet run` 之后 curl 就能拿到 200/404 而不是 500（"no such table"）。

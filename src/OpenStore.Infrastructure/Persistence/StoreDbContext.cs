@@ -41,6 +41,12 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options) : D
 
     public DbSet<Records.ProductTranslationRecord> ProductTranslations => Set<Records.ProductTranslationRecord>();
 
+    // ---- M1 库存批次（数据模型 §3.2）------------------------------------------
+    public DbSet<Records.StockItemRecord> StockItems => Set<Records.StockItemRecord>();
+
+    /// <summary>库存流水：<b>只追加</b>，仓储不得暴露 Update / Delete。</summary>
+    public DbSet<Records.StockLedgerRecord> StockLedger => Set<Records.StockLedgerRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // 只应用本程序集内显式声明的 IEntityTypeConfiguration（编译期固定），不依赖 EF 的约定推断

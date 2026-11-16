@@ -388,6 +388,115 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                     b.ToTable("Session", (string)null);
                 });
 
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.StockItemRecord", b =>
+                {
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("OnHand")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Reserved")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Sold")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("VariantId");
+
+                    b.ToTable("StockItem", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_StockItem_NoOversell", "\"OnHand\" >= \"Reserved\" + \"Sold\"");
+
+                            t.HasCheckConstraint("CK_StockItem_NonNegative", "\"OnHand\" >= 0 AND \"Reserved\" >= 0 AND \"Sold\" >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.StockLedgerRecord", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ChangeType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("CreatedAt");
+
+                    b.Property<int>("OnHandAfter")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("OnHandDelta")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("OperatorId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OperatorName")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("OperatorType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("OrderId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("OrderLineId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ReservedAfter")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ReservedDelta")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SoldAfter")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SoldDelta")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OccurredAt")
+                        .HasDatabaseName("IX_StockLedger_CreatedAt");
+
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("IX_StockLedger_Order");
+
+                    b.HasIndex("ChangeType", "OccurredAt")
+                        .HasDatabaseName("IX_StockLedger_ChangeType_Created");
+
+                    b.HasIndex("VariantId", "Id")
+                        .HasDatabaseName("IX_StockLedger_Variant_Id");
+
+                    b.ToTable("StockLedger", (string)null);
+                });
+
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.CategoryRecord", b =>
                 {
                     b.HasOne("OpenStore.Infrastructure.Persistence.Records.CategoryRecord", null)
@@ -438,6 +547,24 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Product");
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.StockItemRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductVariantRecord", null)
+                        .WithOne()
+                        .HasForeignKey("OpenStore.Infrastructure.Persistence.Records.StockItemRecord", "VariantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.StockLedgerRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductVariantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("VariantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductRecord", b =>
