@@ -1177,7 +1177,7 @@ paths:
                 properties:
                   onHand: { type: integer, minimum: 0, description: 调整后的物理在库数 }
                   available: { type: integer, description: 'onHand − reserved − sold' }
-                  movementId: { type: string, description: 本次写下的 StockLedger 流水号（可据此在流水列表里核对该次调整） }
+                  movementId: { type: string, nullable: true, description: '本次写下的 StockLedger 流水号；把数字改成与当前相同的值属幂等重放，聚合不写流水，此时为 null（不要返回"最近一条流水"，那会让前端以为本次调整留了记录）' }
         '400': { $ref: '#/components/responses/ValidationProblem' }
         '401': { $ref: '#/components/responses/UnauthorizedProblem' }
         '403': { $ref: '#/components/responses/ForbiddenProblem' }
@@ -2192,11 +2192,11 @@ components:
 
     InventoryListItem:
       type: object
-      required: [variantId, sku, productName, onHand, reserved, sold, available, updatedAt]
+      required: [variantId, sku, productTitle, onHand, reserved, sold, available]
       properties:
         variantId: { type: string }
         sku: { type: string }
-        productName: { type: string }
+        productTitle: { type: string }
         onHand: { type: integer, minimum: 0 }
         reserved: { type: integer, minimum: 0, description: 已下单未支付的预占 }
         sold: { type: integer, minimum: 0, description: 已支付未发货的占用（货还在仓） }
@@ -2525,6 +2525,12 @@ components:
         - INV_PRODUCT_CATEGORY_REQUIRED
         - INV_PRICE_INVALID
         - INV_PRIMARY_IMAGE_INVALID
+        # --- INV_STOCK_* 库存不变量（聚合 StockItem 抛出）
+        - INV_STOCK_ADJUST_NEGATIVE
+        - INV_STOCK_ADJUST_REASON_REQUIRED
+        - INV_STOCK_COUNT_NEGATIVE
+        - INV_STOCK_VARIANT_ID_REQUIRED
+        - INV_STOCK_VERSION_INCONSISTENT
         # --- AXIS_*
         - AXIS_LIMIT_EXCEEDED
         - AXIS_SCOPE_INVALID
