@@ -37,7 +37,15 @@ public sealed class ProductCategoryConfiguration : IEntityTypeConfiguration<Prod
 
     public void Configure(EntityTypeBuilder<ProductCategoryRecord> builder)
     {
-        builder.ToTable("ProductCategory");
+        // CK-9（M1 裁决新增，见对照表 §4.1）：IsPrimary 的"唯一真源"问题。
+        // IsPrimary 落 SQLite 是 INTEGER，而两个消费者对它的解读范围**不同**：
+        //   部分唯一索引 `… WHERE "IsPrimary" = 1` → 看不见 2（认为"这个商品没有主分类"）；
+        //   EF 的 bool 映射 → 非零即真（认为"它是主分类"）。
+        // 于是一行 IsPrimary=2 可以同时造成"库认为没有主分类"与"应用认为有主分类"，
+        // 且**不报任何错** —— 面包屑与 canonical 会在某次查询计划变化时换一个答案。
+        // 不写这条 CHECK 就只能靠"没人会写 2"来保证，那是把不变量交给运气。
+        builder.ToTable("ProductCategory", t =>
+            t.HasCheckConstraint("CK_ProductCategory_IsPrimary_Bit", "\"IsPrimary\" IN (0, 1)"));
 
         // 复合主键，无独立 Id：多对多绑定的身份就是这两列
         builder.HasKey(pc => new { pc.ProductId, pc.CategoryId });

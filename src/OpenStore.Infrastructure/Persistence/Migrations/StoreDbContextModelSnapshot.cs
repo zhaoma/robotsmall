@@ -123,7 +123,7 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
 
                     b.ToTable("Category", null, t =>
                         {
-                            t.HasCheckConstraint("CK_Category_Depth", "\"Depth\" >= 0 AND \"Depth\" <= 5");
+                            t.HasCheckConstraint("CK_Category_Depth", "\"Depth\" >= 1 AND \"Depth\" <= 5");
                         });
                 });
 
@@ -210,7 +210,10 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                     b.HasIndex("CategoryId", "ProductId")
                         .HasDatabaseName("IX_ProductCategory_Category_Product");
 
-                    b.ToTable("ProductCategory", (string)null);
+                    b.ToTable("ProductCategory", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ProductCategory_IsPrimary_Bit", "\"IsPrimary\" IN (0, 1)");
+                        });
                 });
 
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductRecord", b =>

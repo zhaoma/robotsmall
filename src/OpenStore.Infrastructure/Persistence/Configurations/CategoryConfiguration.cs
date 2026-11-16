@@ -15,6 +15,19 @@ namespace OpenStore.Infrastructure.Persistence.Configurations;
 /// 下一次重建后约束会<b>凭空消失且无任何报错</b>。
 /// </para>
 /// <para>
+/// <b><c>CK_Category_Depth</c> 的下界是 <c>1</c> 不是 <c>0</c></b>（数据模型 §3.1）：<c>Path</c> 的段是 id
+/// （<c>/1/7/23/</c>），所以唯一自洽的定义是 <b><c>Depth = Path 的段数</c>（含自身）</b>，根节点 = 1 段。
+/// 写成 <c>&gt;= 0</c> 时 <c>Depth = 0</c> 与它自己的 <c>Path</c> 自相矛盾，而上界 5 也从「共 5 层」
+/// 变成「共 6 层」——<b>这两处都不报错</b>，只让「层级超限」的告警晚一层触发。
+/// 原始 <c>M1_Catalog</c> 建表时写的是 <c>&gt;= 0</c>，由 <c>M1_CategoryDepthLowerBound</c> 迁移修正
+/// （名字未变、只有表达式变 → 一条 <c>DropCheckConstraint</c> + 一条 <c>AddCheckConstraint</c>）。
+/// </para>
+/// <para>
+/// <b><c>Depth</c> 刻意没有 <c>HasDefaultValue</c></b>：它必须等于 <c>Path</c> 的段数，任何 DB 侧默认值
+/// 都只会让「忘记赋值」静默变成「赋了一个错的值」并当场通过 <c>CHECK</c>。全表同理没有 DB 默认值，
+/// 对照表「默认」列记的是<b>应用侧应赋的值</b>，不是 DDL 里的 <c>DEFAULT</c>。
+/// </para>
+/// <para>
 /// <b><c>IX_Category_Path</c> 不是可选优化</b>（数据模型 §4.1）：分类页要含子树全部商品，
 /// 省掉前缀索引就要为每个后代分类各查一次 <c>ProductCategory</c>，而越靠近根的节点展开的 id 越多。
 /// </para>
@@ -31,7 +44,7 @@ public sealed class CategoryConfiguration : IEntityTypeConfiguration<CategoryRec
 
     public void Configure(EntityTypeBuilder<CategoryRecord> builder)
     {
-        builder.ToTable("Category", t => t.HasCheckConstraint(DepthCheckName, "\"Depth\" >= 0 AND \"Depth\" <= 5"));
+        builder.ToTable("Category", t => t.HasCheckConstraint(DepthCheckName, "\"Depth\" >= 1 AND \"Depth\" <= 5"));
 
         builder.HasKey(c => c.Id);
 
@@ -47,8 +60,9 @@ public sealed class CategoryConfiguration : IEntityTypeConfiguration<CategoryRec
         builder.Property(c => c.IsDeleted).IsRequired();
 
         // Version：并发令牌（数据模型 §1.4 把 Category 列进"需要乐观锁"的第一梯队）。
-        // 值由 SaveChanges 拦截器维护（M1 基础设施批次）——在拦截器落地前它不会自增，
-        // 这只会让冲突检测暂时失效，不会写出错数据；但**不允许**由映射层手工赋值。
+        // ⚠️ **令牌已声明、拦截器尚未接入**：自增 `SaveChanges` 拦截器属 M2 基础设施批次，
+        // 在那之前 `Version` 不会随写入自增（行里的值恒为插入时的 1）。后果仅限"冲突检测暂时不生效"，
+        // 不会写出错数据；但**不允许映射层手工赋值**，也不要在 M1 的任何地方假设并发保护已经生效。
         builder.Property(c => c.Version)
             .IsRequired()
             .IsConcurrencyToken();
