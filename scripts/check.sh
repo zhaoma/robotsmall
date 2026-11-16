@@ -289,6 +289,7 @@ if [ "$MODE" = "list" ]; then
   step 20 fixture             "AC-14a 验收 fixture 声明侧判据（不连库、不依赖 .NET）"
   step 21 soak_self_test      "压测判定逻辑自证（跑 HEAD 版：验的是提交后的状态）"
   step 22 ledger_landing      "台账裁决的落点在正文里真的提过（L1~L5，含棘轮）"
+  step 23 migration_checks    "配置声明的 CHECK 必须在迁移里真的被创建（含自证）"
   exit 0
 fi
 
@@ -470,6 +471,22 @@ if [ "${goto_summary:-0}" != "1" ]; then
              ./scripts/check-ledger-landing.sh > "$d/out" 2>&1; rc=$?
              cat "$d/out"
              sed -n "s/^结论：/DETAIL: /p" "$d/out"
+             rm -rf "$d"; exit $rc'
+
+  # ---- 23 配置声明的 CHECK ↔ 迁移真的创建了它 --------------------------------
+  # 第 8 步 `has-pending-model-changes` 比的是**模型 ↔ 快照**，而快照是上一次
+  # `migrations add` 的产物 —— 在"配置加了 CHECK、没重新生成迁移"时，快照与
+  # 模型同时包含它，**第 8 步恒绿而新库里没有这条约束**。判据的对象是它自己的
+  # 产物，属自证（同 `%an` / `rc` / `mtime`）。
+  # 这条是它今天的实机来源：M1 目录层提交后 `CK_ProductCategory_IsPrimary_Bit`
+  # 只落在 Configuration 与快照里，靠人翻才被看见。
+  # 自证先跑：5 条样本（一致/缺/只在 Designer/配置为空/迁移目录不存在），
+  # 其中"只在 Designer 里"那条专门证明"排除 Designer"真的生效。
+  run_step 23 migration_checks "配置声明的 CHECK 在迁移里被创建" \
+    bash -c './scripts/check-migration-checks.sh --self-test || exit $?
+             d=$(mktemp -d) || exit 2
+             ./scripts/check-migration-checks.sh > "$d/out" 2>&1; rc=$?
+             cat "$d/out"
              rm -rf "$d"; exit $rc'
 fi
 
