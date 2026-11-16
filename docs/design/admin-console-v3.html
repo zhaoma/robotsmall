@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-density="comfortable" data-insp="on">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenStore 管理端 · 方案 B「工作台」</title>
+<style>
+/* ═════════════════════════════════════════════════════════════
+   既有 token —— 逐字拷贝自 frontend/packages/ui/src/styles/index.css
+   （单文件样稿要能独立打开，故把真源值搬进来；落地时不复制这段）
+   ═════════════════════════════════════════════════════════════ */
+:root{
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --color-bg: #ffffff;
+  --color-surface: #f6f7f9;
+  --color-surface-raised: #ffffff;
+  --color-fg: #111827;
+  --color-muted: #6b7280;
+  --color-subtle: #9aa3af;
+  --color-border: #e5e7eb;
+  --color-border-strong: #d1d5db;
+
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-primary-active: #1e40af;
+  --color-primary-fg: #ffffff;
+  --color-primary-soft: #eef2ff;
+
+  --color-success: #15803d;
+  --color-success-bg: #eaf6ee;
+  --color-warning: #b45309;
+  --color-warning-bg: #fdf3e3;
+  --color-danger: #dc2626;
+  --color-danger-hover: #b91c1c;
+  --color-danger-fg: #ffffff;
+  --color-danger-bg: #fdeaea;
+  --color-info: #1d6fd1;
+  --color-info-bg: #e8f1fc;
+
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--color-primary) 40%, transparent);
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal: 300;
+  --z-toast: 400;
+
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--color-fg) 6%, transparent);
+  --shadow-md: 0 4px 12px color-mix(in srgb, var(--color-fg) 8%, transparent);
+  --shadow-lg: 0 12px 32px color-mix(in srgb, var(--color-fg) 12%, transparent);
+
+  color-scheme: light;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   v3 新增的语义层：全部由上面既有 token 混出，不引入独立色值。
+   落地时这一段整体并入 index.css，作为「方案 B」的 token 增量。
+   ───────────────────────────────────────────────────────────── */
+:root{
+  --color-hover: color-mix(in srgb, var(--color-fg) 4%, transparent);
+  --color-selected: color-mix(in srgb, var(--color-primary) 7%, transparent);
+  --color-neutral-bg: color-mix(in srgb, var(--color-fg) 6%, transparent);
+  --color-neutral-fg: color-mix(in srgb, var(--color-fg) 62%, transparent);
+  --color-rail-bg: color-mix(in srgb, var(--color-fg) 96%, var(--color-primary));
+  --color-rail-fg: color-mix(in srgb, var(--color-primary-fg) 52%, var(--color-rail-bg));
+  --color-rail-fg-on: var(--color-primary-fg);
+  --color-track: color-mix(in srgb, var(--color-fg) 10%, transparent);
+  --shadow-pop: 0 16px 48px color-mix(in srgb, var(--color-fg) 18%, transparent),
+                0 2px 8px color-mix(in srgb, var(--color-fg) 8%, transparent);
+  --rail-w: 60px;
+  --col-w: 228px;
+  --insp-w: 388px;
+  --row-h: 56px;
+  --eyebrow: 10.5px;
+}
+html[data-density="compact"]{ --row-h: 44px; }
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--font-sans);
+  background:var(--color-bg);
+  color:var(--color-fg);
+  font-size:13px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+}
+svg.ico{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg.ico.sm{width:14px;height:14px}
+svg.ico.lg{width:19px;height:19px}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+:focus-visible{outline:none;box-shadow:var(--focus-ring);border-radius:var(--radius-sm)}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+
+/* ═══ 骨架：三级导航 + 工作区 + 常驻检查器 ═══ */
+.app{
+  display:grid;
+  grid-template-columns:var(--rail-w) var(--col-w) minmax(0,1fr) var(--insp-w);
+  height:100vh;
+}
+body[data-insp="off"]{--insp-w:0px}
+body[data-insp="off"] .insp{display:none}
+
+/* ─── 第一级：图标轨 ─── */
+.rail{
+  background:var(--color-rail-bg);
+  display:flex;flex-direction:column;align-items:center;
+  padding:10px 0;gap:2px;
+  border-right:1px solid color-mix(in srgb, var(--color-fg) 30%, transparent);
+}
+.rail__mark{
+  width:32px;height:32px;border-radius:9px;margin-bottom:10px;
+  background:var(--color-primary);color:var(--color-primary-fg);
+  display:grid;place-items:center;font-weight:700;font-size:13px;letter-spacing:-.02em;
+  flex:none;
+}
+.rail__btn{
+  position:relative;width:38px;height:38px;border-radius:9px;
+  display:grid;place-items:center;color:var(--color-rail-fg);flex:none;
+}
+.rail__btn:hover{background:color-mix(in srgb, var(--color-primary-fg) 9%, transparent);color:color-mix(in srgb,var(--color-primary-fg) 88%, transparent)}
+.rail__btn[aria-current]{background:color-mix(in srgb, var(--color-primary-fg) 13%, transparent);color:var(--color-rail-fg-on)}
+.rail__btn[aria-current]::before{
+  content:"";position:absolute;left:-11px;top:9px;bottom:9px;width:2.5px;
+  border-radius:0 3px 3px 0;background:var(--color-primary);
+}
+.rail__dot{
+  position:absolute;top:7px;right:7px;width:5px;height:5px;border-radius:50%;
+  background:var(--color-danger);box-shadow:0 0 0 2px var(--color-rail-bg);
+}
+.rail__sep{width:24px;height:1px;background:color-mix(in srgb,var(--color-primary-fg) 14%, transparent);margin:8px 0}
+.rail__spacer{flex:1}
+.rail__ava{
+  width:30px;height:30px;border-radius:50%;
+  background:color-mix(in srgb, var(--color-primary-fg) 16%, transparent);
+  color:#fff;display:grid;place-items:center;font-size:11px;font-weight:600;
+  border:1px solid color-mix(in srgb,var(--color-primary-fg) 22%, transparent);
+}
+
+/* ─── 第二级：上下文导航列 ─── */
+.col{
+  border-right:1px solid var(--color-border);
+  background:var(--color-surface);
+  display:flex;flex-direction:column;min-height:0;
+}
+.col__head{padding:16px 16px 12px}
+.col__title{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600;letter-spacing:-.01em}
+.col__title svg{color:var(--color-subtle)}
+.col__sub{font-size:11px;color:var(--color-muted);margin-top:3px}
+.col__body{flex:1;overflow-y:auto;padding:0 8px 12px}
+.col__label{
+  font-size:var(--eyebrow);letter-spacing:.09em;text-transform:uppercase;
+  color:var(--color-subtle);font-weight:600;padding:12px 8px 6px;
+}
+.navi{
+  display:flex;align-items:center;gap:9px;
+  padding:7px 9px;border-radius:var(--radius-md);
+  color:color-mix(in srgb, var(--color-fg) 78%, transparent);
+  font-size:12.5px;text-decoration:none;position:relative;
+}
+.navi:hover{background:var(--color-hover);color:var(--color-fg)}
+.navi[aria-current]{background:var(--color-bg);color:var(--color-fg);font-weight:600;
+  box-shadow:0 1px 2px color-mix(in srgb,var(--color-fg) 7%,transparent),
+             0 0 0 1px var(--color-border)}
+.navi[aria-current] svg{color:var(--color-primary)}
+.navi__c{margin-left:auto;font-size:11px;color:var(--color-subtle);
+  font-variant-numeric:tabular-nums}
+.navi__c.warn{color:var(--color-danger);font-weight:600}
+.col__foot{border-top:1px solid var(--color-border);padding:10px;display:grid;gap:2px}
+.col__recent{padding:4px 8px 8px}
+.recent{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;
+  font-size:12px;color:var(--color-muted)}
+.recent:hover{background:var(--color-hover);color:var(--color-fg)}
+.recent i{width:5px;height:5px;border-radius:50%;background:var(--color-border-strong);flex:none}
+
+/* ─── 工作区 ─── */
+.work{display:flex;flex-direction:column;min-width:0;background:var(--color-bg)}
+.topbar{
+  height:52px;flex:none;display:flex;align-items:center;gap:12px;
+  padding:0 20px;border-bottom:1px solid var(--color-border);
+  background:color-mix(in srgb, var(--color-bg) 82%, transparent);
+  backdrop-filter:saturate(1.4) blur(12px);
+  position:relative;z-index:var(--z-sticky);
+}
+.crumb{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--color-muted)}
+.crumb b{color:var(--color-fg);font-weight:600}
+.crumb svg{width:12px;height:12px;stroke:var(--color-subtle)}
+.topbar__spacer{flex:1}
+.searchbtn{
+  display:flex;align-items:center;gap:7px;height:30px;padding:0 10px 0 9px;
+  border:1px solid var(--color-border);border-radius:7px;
+  background:var(--color-bg);color:var(--color-muted);font-size:12px;min-width:220px;
+}
+.searchbtn:hover{border-color:var(--color-border-strong);color:var(--color-fg)}
+.searchbtn kbd{
+  margin-left:auto;font-family:var(--font-mono);font-size:10.5px;
+  padding:1px 4px;border-radius:4px;background:var(--color-neutral-bg);
+  color:var(--color-muted);letter-spacing:.02em;
+}
+.seg{display:flex;padding:2px;border-radius:7px;background:var(--color-surface);border:1px solid var(--color-border)}
+.seg button{padding:3px 9px;border-radius:5px;font-size:11.5px;color:var(--color-muted)}
+.seg button[aria-pressed="true"]{background:var(--color-bg);color:var(--color-fg);font-weight:600;
+  box-shadow:0 1px 2px color-mix(in srgb,var(--color-fg) 9%,transparent)}
+.iconbtn{width:30px;height:30px;border-radius:7px;display:grid;place-items:center;
+  color:var(--color-muted);position:relative}
+.iconbtn:hover{background:var(--color-hover);color:var(--color-fg)}
+.iconbtn .dot{position:absolute;top:6px;right:6px;width:5px;height:5px;border-radius:50%;
+  background:var(--color-danger);box-shadow:0 0 0 2px var(--color-bg)}
+
+.scroll{flex:1;overflow-y:auto;min-height:0}
+.wrap{padding:20px 20px 0}
+
+/* 页头 */
+.pagehead{display:flex;align-items:flex-start;gap:16px;margin-bottom:16px}
+.pagehead h1{font-size:21px;font-weight:650;letter-spacing:-.022em;display:flex;align-items:center;gap:9px}
+.pagehead h1 .cnt{
+  font-size:11px;font-weight:600;padding:2px 7px;border-radius:20px;
+  background:var(--color-primary-soft);color:var(--color-primary);
+  letter-spacing:.01em;
+}
+.pagehead p{font-size:12px;color:var(--color-muted);margin-top:4px}
+.actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+.btn{
+  display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;
+  border-radius:7px;font-size:12.5px;font-weight:600;border:1px solid var(--color-border);
+  background:var(--color-bg);color:var(--color-fg);
+  box-shadow:0 1px 2px color-mix(in srgb,var(--color-fg) 5%,transparent);
+}
+.btn:hover{border-color:var(--color-border-strong);background:var(--color-surface)}
+.btn--primary{background:var(--color-primary);border-color:var(--color-primary);color:var(--color-primary-fg);
+  box-shadow:0 1px 2px color-mix(in srgb,var(--color-primary) 35%,transparent),
+             0 4px 10px color-mix(in srgb,var(--color-primary) 22%,transparent)}
+.btn--primary:hover{background:var(--color-primary-hover);border-color:var(--color-primary-hover)}
+.btn--sm{height:28px;padding:0 9px;font-size:12px}
+
+/* 指标带：一条横带，不用卡片 */
+.stats{
+  display:grid;grid-template-columns:repeat(4,1fr);
+  border:1px solid var(--color-border);border-radius:var(--radius-lg);
+  background:linear-gradient(180deg,var(--color-bg),color-mix(in srgb,var(--color-surface) 55%,var(--color-bg)));
+  overflow:hidden;margin-bottom:16px;
+}
+.stat{padding:13px 16px 12px;border-left:1px solid var(--color-border);position:relative}
+.stat:first-child{border-left:0}
+.stat__k{font-size:var(--eyebrow);letter-spacing:.08em;text-transform:uppercase;
+  color:var(--color-subtle);font-weight:600;display:flex;align-items:center;gap:5px}
+.stat__v{font-size:25px;font-weight:640;letter-spacing:-.03em;margin-top:5px;line-height:1.1}
+.stat__v small{font-size:13px;font-weight:600;color:var(--color-muted);letter-spacing:0;margin-left:2px}
+.stat__d{font-size:11.5px;color:var(--color-muted);margin-top:4px;display:flex;align-items:center;gap:4px}
+.up{color:var(--color-success);font-weight:600}
+.down{color:var(--color-danger);font-weight:600}
+.spark{position:absolute;right:14px;bottom:12px;opacity:.85}
+.stat--warn .stat__v{color:var(--color-danger)}
+.stat--warn::after{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--color-danger)}
+
+/* 工具条 */
+.toolbar{
+  display:flex;align-items:center;gap:8px;padding:9px 10px;
+  border:1px solid var(--color-border);border-bottom:0;
+  border-radius:var(--radius-lg) var(--radius-lg) 0 0;
+  background:var(--color-surface);
+}
+.chips{display:flex;gap:3px}
+.chip{
+  padding:4px 9px;border-radius:6px;font-size:12px;color:var(--color-muted);
+  display:flex;align-items:center;gap:5px;
+}
+.chip:hover{background:var(--color-hover);color:var(--color-fg)}
+.chip[aria-pressed="true"]{background:var(--color-bg);color:var(--color-fg);font-weight:600;
+  box-shadow:0 1px 2px color-mix(in srgb,var(--color-fg) 8%,transparent),
+             0 0 0 1px var(--color-border)}
+.chip span{font-size:10.5px;color:var(--color-subtle);font-variant-numeric:tabular-nums}
+.chip[aria-pressed="true"] span{color:var(--color-primary)}
+.toolbar__r{margin-left:auto;display:flex;align-items:center;gap:6px}
+.mini{
+  display:flex;align-items:center;gap:5px;height:26px;padding:0 8px;border-radius:6px;
+  font-size:12px;color:var(--color-muted);border:1px solid transparent;
+}
+.mini:hover{background:var(--color-bg);border-color:var(--color-border);color:var(--color-fg)}
+
+/* 表格：贴纸式平铺，行靠发丝线分隔，不用卡片阴影 */
+.tbl{
+  border:1px solid var(--color-border);border-radius:0 0 var(--radius-lg) var(--radius-lg);
+  background:var(--color-bg);overflow:hidden;
+}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+/* 详情面板收起时补出「分类 / 更新」，避免商品列被拉成一条空带 */
+.extra{display:none}
+body[data-insp="off"] .extra{display:table-cell}
+thead th:nth-child(1){width:36px}
+thead th:nth-child(2){width:320px}
+thead th:nth-child(3){width:auto}
+thead th:nth-child(4){width:88px}
+thead th:nth-child(5){width:136px}
+thead th:nth-child(6){width:104px}
+thead th:nth-child(7){width:112px}
+thead th:nth-child(8){width:34px}
+thead th{
+  font-size:var(--eyebrow);letter-spacing:.07em;text-transform:uppercase;
+  color:var(--color-subtle);font-weight:600;text-align:left;
+  padding:8px 12px;background:color-mix(in srgb,var(--color-surface) 70%,var(--color-bg));
+  border-bottom:1px solid var(--color-border);white-space:nowrap;
+}
+thead th.r{text-align:right}
+thead th .th{display:inline-flex;align-items:center;gap:3px}
+tbody tr{border-bottom:1px solid color-mix(in srgb,var(--color-border) 70%, transparent)}
+tbody tr:last-child{border-bottom:0}
+tbody tr:hover{background:var(--color-hover)}
+tbody tr[aria-selected]{background:var(--color-selected)}
+tbody tr[aria-selected] td:first-child{box-shadow:inset 2.5px 0 0 var(--color-primary)}
+td{padding:0 12px;height:var(--row-h);vertical-align:middle}
+.cell-prod{display:flex;align-items:center;gap:10px;min-width:0}
+.thumb{
+  width:32px;height:32px;border-radius:7px;flex:none;
+  display:grid;place-items:center;font-size:12px;font-weight:600;
+  background:color-mix(in srgb,var(--color-primary) 9%,var(--color-surface));
+  color:color-mix(in srgb,var(--color-primary) 78%,var(--color-fg));
+  border:1px solid color-mix(in srgb,var(--color-primary) 14%,transparent);
+}
+.cell-prod b{font-weight:560;font-size:12.5px;display:block;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cell-prod code{font-family:var(--font-mono);font-size:10.5px;color:var(--color-subtle);
+  display:block;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pill{
+  display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;
+  padding:2px 7px;border-radius:20px;border:1px solid transparent;white-space:nowrap;
+}
+.pill i{width:4px;height:4px;border-radius:50%;background:currentColor}
+.pill--ok{background:var(--color-success-bg);color:var(--color-success);
+  border-color:color-mix(in srgb,var(--color-success) 16%,transparent)}
+.pill--draft{background:var(--color-neutral-bg);color:var(--color-neutral-fg);
+  border-color:var(--color-border)}
+.pill--out{background:var(--color-danger-bg);color:var(--color-danger);
+  border-color:color-mix(in srgb,var(--color-danger) 18%,transparent)}
+.pill--off{background:var(--color-neutral-bg);color:color-mix(in srgb,var(--color-fg) 45%,transparent);
+  border-color:var(--color-border)}
+.stock{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+.stock__n{font-size:12.5px;font-weight:600;font-variant-numeric:tabular-nums;min-width:26px;text-align:right}
+.stock__n.muted{color:var(--color-subtle);font-weight:500}
+.bar{width:64px;height:5px;border-radius:3px;background:var(--color-track);overflow:hidden;flex:none}
+.bar i{display:block;height:100%;border-radius:2px;background:var(--color-success)}
+.bar i.warn{background:var(--color-warning)}
+.bar i.zero{background:var(--color-danger)}
+.price{text-align:right;font-size:12.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.price span{display:block;font-size:10.5px;font-weight:400;color:var(--color-subtle)}
+.rowact{opacity:0;transition:opacity .12s}
+tr:hover .rowact,tr[aria-selected] .rowact{opacity:1}
+.ck{width:15px;height:15px;border-radius:4px;border:1.5px solid var(--color-border-strong);
+  display:grid;place-items:center;background:var(--color-bg);cursor:pointer}
+.ck[aria-checked="true"]{background:var(--color-primary);border-color:var(--color-primary);color:#fff}
+.tbl__foot{
+  display:flex;align-items:center;gap:10px;padding:9px 12px;
+  border:1px solid var(--color-border);border-top:0;
+  border-radius:0 0 var(--radius-lg) var(--radius-lg);
+  background:var(--color-surface);font-size:12px;color:var(--color-muted);
+  position:sticky;bottom:0;
+}
+.pager{margin-left:auto;display:flex;align-items:center;gap:2px}
+.pg{min-width:26px;height:26px;border-radius:6px;display:grid;place-items:center;
+  font-size:12px;color:var(--color-muted);font-variant-numeric:tabular-nums}
+.pg:hover{background:var(--color-bg)}
+.pg[aria-current]{background:var(--color-bg);color:var(--color-fg);font-weight:600;
+  box-shadow:0 0 0 1px var(--color-border)}
+
+/* ─── 检查器：常驻，参与布局 ─── */
+.insp{
+  border-left:1px solid var(--color-border);background:var(--color-bg);
+  display:flex;flex-direction:column;min-height:0;
+}
+.insp__head{padding:14px 16px 12px;border-bottom:1px solid var(--color-border)}
+.insp__top{display:flex;align-items:flex-start;gap:10px}
+.insp__thumb{width:40px;height:40px;border-radius:9px;flex:none;
+  background:color-mix(in srgb,var(--color-primary) 10%,var(--color-surface));
+  color:color-mix(in srgb,var(--color-primary) 80%,var(--color-fg));
+  display:grid;place-items:center;font-weight:600;
+  border:1px solid color-mix(in srgb,var(--color-primary) 15%,transparent)}
+.insp__name{font-size:13.5px;font-weight:640;letter-spacing:-.01em;line-height:1.35}
+.insp__slug{font-family:var(--font-mono);font-size:10.5px;color:var(--color-subtle);margin-top:2px}
+.insp__x{margin-left:auto;width:24px;height:24px;border-radius:6px;display:grid;place-items:center;
+  color:var(--color-subtle)}
+.insp__x:hover{background:var(--color-hover);color:var(--color-fg)}
+.tabs{display:flex;gap:2px;margin-top:12px;border-bottom:1px solid var(--color-border);
+  margin-bottom:-13px}
+.tab{padding:6px 8px 8px;font-size:12px;color:var(--color-muted);position:relative;
+  border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab:hover{color:var(--color-fg)}
+.tab[aria-selected="true"]{color:var(--color-fg);font-weight:600;border-bottom-color:var(--color-primary)}
+.tab span{font-size:10px;color:var(--color-subtle);margin-left:2px}
+.insp__body{flex:1;overflow-y:auto;padding:16px}
+.sect{margin-bottom:18px}
+.sect__k{font-size:var(--eyebrow);letter-spacing:.08em;text-transform:uppercase;
+  color:var(--color-subtle);font-weight:600;margin-bottom:8px;
+  display:flex;align-items:center;gap:5px}
+.kv{display:grid;grid-template-columns:76px 1fr;gap:7px 10px;font-size:12px}
+.kv dt{color:var(--color-muted)}
+.kv dd{color:var(--color-fg);font-weight:500}
+.kv dd code{font-family:var(--font-mono);font-size:11px;
+  background:var(--color-neutral-bg);padding:1px 4px;border-radius:4px}
+.varrow{
+  display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:7px;
+  border:1px solid var(--color-border);margin-bottom:5px;font-size:11.5px;
+}
+.varrow:last-child{margin-bottom:0}
+.varrow code{font-family:var(--font-mono);font-size:11px;color:var(--color-fg)}
+.varrow__meta{margin-left:auto;text-align:right;line-height:1.3}
+.varrow__meta b{font-weight:600;font-variant-numeric:tabular-nums;font-size:11.5px}
+.varrow__meta em{display:block;font-style:normal;font-size:10px;color:var(--color-subtle);
+  font-variant-numeric:tabular-nums}
+.varrow--out{border-color:color-mix(in srgb,var(--color-danger) 26%,transparent);
+  background:color-mix(in srgb,var(--color-danger-bg) 60%,var(--color-bg))}
+.callout{
+  display:flex;gap:8px;padding:9px 10px;border-radius:8px;font-size:11.5px;
+  background:var(--color-warning-bg);color:color-mix(in srgb,var(--color-warning) 82%,var(--color-fg));
+  border:1px solid color-mix(in srgb,var(--color-warning) 20%,transparent);
+  line-height:1.45;
+}
+.callout svg{color:var(--color-warning);margin-top:1px}
+.insp__foot{
+  flex:none;padding:11px 16px;border-top:1px solid var(--color-border);
+  display:flex;gap:8px;background:var(--color-surface);
+}
+.insp__foot .btn{flex:1;justify-content:center}
+
+/* ─── 命令面板 ─── */
+.palette{
+  position:fixed;inset:0;z-index:var(--z-modal);
+  background:color-mix(in srgb, var(--color-fg) 34%, transparent);
+  backdrop-filter:blur(3px);
+  display:grid;place-items:start center;padding-top:14vh;
+}
+.palette[hidden]{display:none}
+.pal{
+  width:min(560px,92vw);border-radius:14px;overflow:hidden;
+  background:var(--color-bg);box-shadow:var(--shadow-pop);
+  border:1px solid var(--color-border);
+}
+.pal__in{display:flex;align-items:center;gap:9px;padding:13px 15px;
+  border-bottom:1px solid var(--color-border)}
+.pal__in input{flex:1;border:0;outline:none;font:inherit;font-size:13.5px;
+  background:none;color:var(--color-fg)}
+.pal__in input::placeholder{color:var(--color-subtle)}
+/* 输入框内已有光标提示，整块 focus 环在面板里显得脏，这里只保留 caret */
+.pal__in input:focus-visible{box-shadow:none}
+.pal__body{max-height:46vh;overflow-y:auto;padding:6px}
+.pal__g{font-size:var(--eyebrow);letter-spacing:.08em;text-transform:uppercase;
+  color:var(--color-subtle);font-weight:600;padding:8px 10px 4px}
+.pal__i{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:7px;
+  font-size:12.5px;color:var(--color-fg)}
+.pal__i:hover,.pal__i[data-on]{background:var(--color-hover)}
+.pal__i[data-on]{box-shadow:inset 2px 0 0 var(--color-primary)}
+.pal__i svg{color:var(--color-muted)}
+.pal__i small{margin-left:auto;font-size:10.5px;color:var(--color-subtle)}
+.pal__foot{display:flex;gap:14px;padding:9px 15px;border-top:1px solid var(--color-border);
+  background:var(--color-surface);font-size:10.5px;color:var(--color-muted)}
+.pal__foot kbd{font-family:var(--font-mono);font-size:10px;padding:1px 4px;border-radius:3px;
+  background:var(--color-bg);border:1px solid var(--color-border);margin-right:3px}
+
+/* ─── 深色 ─── */
+html[data-theme="dark"]{
+  --color-bg:#0d1117;
+  --color-surface:#131a23;
+  --color-surface-raised:#182029;
+  --color-fg:#e6eaf0;
+  --color-muted:#9aa3af;
+  --color-subtle:#6b7480;
+  --color-border:#232c37;
+  --color-border-strong:#313c4a;
+  --color-primary:#3b82f6;
+  --color-primary-hover:#2f74e8;
+  --color-primary-soft:#16233a;
+  --color-success:#4ade80;
+  --color-success-bg:#12261a;
+  --color-warning:#fbbf24;
+  --color-warning-bg:#2a2110;
+  --color-danger:#f87171;
+  --color-danger-bg:#2a1414;
+  --color-neutral-bg:rgba(255,255,255,.07);
+  --color-neutral-fg:#98a1ac;
+  --color-rail-bg:#080b10;
+  --color-hover:rgba(255,255,255,.045);
+  --color-selected:rgba(59,130,246,.13);
+  color-scheme:dark;
+}
+html[data-theme="dark"] .stats{background:linear-gradient(180deg,#0f151d,#0d1117)}
+html[data-theme="dark"] .rail__btn[aria-current]{background:rgba(255,255,255,.10)}
+html[data-theme="dark"]{--color-track:rgba(255,255,255,.13)}
+
+@media (max-width:1180px){
+  body{--insp-w:0px}
+  .insp{display:none}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></symbol>
+  <symbol id="i-bag" viewBox="0 0 24 24"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></symbol>
+  <symbol id="i-chev-d" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-cols" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m20 6-11 11-5-5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-trend" viewBox="0 0 24 24"><path d="m23 6-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/></symbol>
+  <symbol id="i-side" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></symbol>
+  <symbol id="i-cmd" viewBox="0 0 24 24"><path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+  <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></symbol>
+</defs></svg>
+
+<div class="app">
+  <!-- 一级：图标轨 -->
+  <aside class="rail">
+    <div class="rail__mark">OS</div>
+    <button class="rail__btn" aria-current="page" title="商品"><svg class="ico lg"><use href="#i-box"/></svg></button>
+    <button class="rail__btn" title="订单"><svg class="ico lg"><use href="#i-bag"/></svg><span class="rail__dot"></span></button>
+    <button class="rail__btn" title="库存"><svg class="ico lg"><use href="#i-layers"/></svg></button>
+    <button class="rail__btn" title="客户"><svg class="ico lg"><use href="#i-users"/></svg></button>
+    <div class="rail__sep"></div>
+    <button class="rail__btn" title="内容"><svg class="ico lg"><use href="#i-file"/></svg></button>
+    <button class="rail__btn" title="多语种"><svg class="ico lg"><use href="#i-globe"/></svg></button>
+    <button class="rail__btn" title="系统"><svg class="ico lg"><use href="#i-sliders"/></svg></button>
+    <div class="rail__spacer"></div>
+    <div class="rail__ava">ZM</div>
+  </aside>
+
+  <!-- 二级：上下文导航 -->
+  <nav class="col">
+    <div class="col__head">
+      <div class="col__title">商品中心<svg class="ico sm"><use href="#i-chev-d"/></svg></div>
+      <div class="col__sub">Robot Arm Store · 中文</div>
+    </div>
+    <div class="col__body">
+      <div class="col__label">目录</div>
+      <a class="navi" href="#" aria-current="page"><svg class="ico"><use href="#i-box"/></svg>商品<span class="navi__c">1,284</span></a>
+      <a class="navi" href="#"><svg class="ico"><use href="#i-table"/></svg>分类<span class="navi__c">38</span></a>
+      <a class="navi" href="#"><svg class="ico"><use href="#i-layers"/></svg>属性<span class="navi__c">126</span></a>
+      <a class="navi" href="#"><svg class="ico"><use href="#i-side"/></svg>库存<span class="navi__c warn">6</span></a>
+      <div class="col__label">交易</div>
+      <a class="navi" href="#"><svg class="ico"><use href="#i-bag"/></svg>订单<span class="navi__c">47</span></a>
+      <a class="navi" href="#"><svg class="ico"><use href="#i-bag"/></svg>退货<span class="navi__c">3</span></a>
+      <a class="navi" href="#"><svg class="ico"><use href="#i-users"/></svg>客户<span class="navi__c">892</span></a>
+      <div class="col__label">内容与语种</div>
+      <a class="navi" href="#"><svg class="ico"><use href="#i-file"/></svg>主题<span class="navi__c">2</span></a>
+      <a class="navi" href="#"><svg class="ico"><use href="#i-file"/></svg>静态页<span class="navi__c">9</span></a>
+      <a class="navi" href="#"><svg class="ico"><use href="#i-globe"/></svg>UI 文案<span class="navi__c">8</span></a>
+      <a class="navi" href="#"><svg class="ico"><use href="#i-globe"/></svg>覆盖率<span class="navi__c">91%</span></a>
+      <div class="col__label">最近</div>
+      <div class="col__recent">
+        <div class="recent"><i></i>六轴机械臂 Pro</div>
+        <div class="recent"><i></i>2026-11 批次导入</div>
+        <div class="recent"><i></i>机械臂分类树</div>
+      </div>
+    </div>
+    <div class="col__foot">
+      <a class="navi" href="#"><svg class="ico"><use href="#i-sliders"/></svg>设置</a>
+      <a class="navi" href="#"><svg class="ico"><use href="#i-cmd"/></svg>快捷键<span class="navi__c">⌘/</span></a>
+    </div>
+  </nav>
+
+  <!-- 工作区 -->
+  <section class="work">
+    <header class="topbar">
+      <div class="crumb">商品中心<svg class="ico"><use href="#i-chev-r"/></svg><b>商品</b></div>
+      <div class="topbar__spacer"></div>
+      <button class="searchbtn" id="openPal">
+        <svg class="ico sm"><use href="#i-search"/></svg>搜索商品、订单、客户<kbd>⌘K</kbd>
+      </button>
+      <div class="seg" id="density">
+        <button data-d="comfortable" aria-pressed="true">舒适</button>
+        <button data-d="compact" aria-pressed="false">紧凑</button>
+      </div>
+      <button class="iconbtn" id="toggleInsp" title="详情面板"><svg class="ico"><use href="#i-side"/></svg></button>
+      <button class="iconbtn" id="toggleTheme" title="切换深色"><svg class="ico"><use href="#i-moon" id="themeIcon"/></svg></button>
+      <button class="iconbtn" title="通知"><svg class="ico"><use href="#i-bell"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="scroll">
+      <div class="wrap">
+        <div class="pagehead">
+          <div>
+            <h1>商品<span class="cnt">1,284</span></h1>
+            <p>六轴机械臂 Pro 等 6 项本周有变更 · 上次同步 2 分钟前</p>
+          </div>
+          <div class="actions">
+            <button class="btn"><svg class="ico sm"><use href="#i-upload"/></svg>导入</button>
+            <button class="btn btn--primary"><svg class="ico sm"><use href="#i-plus"/></svg>新建商品</button>
+          </div>
+        </div>
+
+        <div class="stats">
+          <div class="stat">
+            <div class="stat__k">在售 SKU</div>
+            <div class="stat__v num">962<small>/ 1,284</small></div>
+            <div class="stat__d"><span class="up">+12</span>较上周</div>
+            <svg class="spark" width="60" height="22" viewBox="0 0 60 22"><polyline points="0,17 10,15 20,16 30,11 40,12 50,7 60,5" fill="none" stroke="var(--color-success)" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </div>
+          <div class="stat">
+            <div class="stat__k">今日下单</div>
+            <div class="stat__v num">47</div>
+            <div class="stat__d"><span class="up">+6.8%</span>环比昨日</div>
+            <svg class="spark" width="60" height="22" viewBox="0 0 60 22"><polyline points="0,14 10,16 20,12 30,13 40,9 50,11 60,6" fill="none" stroke="var(--color-primary)" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </div>
+          <div class="stat stat--warn">
+            <div class="stat__k">缺货变体</div>
+            <div class="stat__v num">6</div>
+            <div class="stat__d"><span class="down">3 个</span>影响在售</div>
+            <svg class="spark" width="60" height="22" viewBox="0 0 60 22"><polyline points="0,18 10,16 20,17 30,13 40,10 50,11 60,4" fill="none" stroke="var(--color-danger)" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </div>
+          <div class="stat">
+            <div class="stat__k">库存总值</div>
+            <div class="stat__v num">¥2.84<small>M</small></div>
+            <div class="stat__d">按采购成本口径</div>
+            <svg class="spark" width="60" height="22" viewBox="0 0 60 22"><polyline points="0,9 10,11 20,8 30,10 40,7 50,9 60,8" fill="none" stroke="var(--color-muted)" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="chips">
+            <button class="chip" aria-pressed="true">全部<span>1,284</span></button>
+            <button class="chip" aria-pressed="false">在售<span>962</span></button>
+            <button class="chip" aria-pressed="false">草稿<span>210</span></button>
+            <button class="chip" aria-pressed="false">缺货<span>6</span></button>
+            <button class="chip" aria-pressed="false">已下架<span>106</span></button>
+          </div>
+          <div class="toolbar__r">
+            <button class="mini"><svg class="ico sm"><use href="#i-filter"/></svg>筛选</button>
+            <button class="mini"><svg class="ico sm"><use href="#i-trend"/></svg>最近更新</button>
+            <button class="mini"><svg class="ico sm"><use href="#i-cols"/></svg>列</button>
+          </div>
+        </div>
+
+        <div class="tbl">
+          <table>
+            <thead>
+              <tr>
+                <th><span class="ck" aria-checked="false" role="checkbox"></span></th>
+                <th>商品</th>
+                <th class="extra">分类</th>
+                <th>状态</th>
+                <th class="r">库存 / 阈值</th>
+                <th class="r">售价</th>
+                <th class="extra">更新</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr aria-selected="true">
+                <td><span class="ck" aria-checked="false" role="checkbox"></span></td>
+                <td><div class="cell-prod"><div class="thumb">臂</div><div style="min-width:0"><b>六轴机械臂 Pro</b><code>robot-arm-pro</code></div></div></td>
+                <td class="extra">机械臂</td>
+                <td><span class="pill pill--ok"><i></i>在售</span></td>
+                <td><div class="stock"><span class="stock__n">42</span><span class="bar"><i style="width:70%"></i></span></div></td>
+                <td class="price">¥12,800</td>
+                <td class="extra"><span style="color:var(--color-muted);font-variant-numeric:tabular-nums;font-size:11.5px">06:20</span></td>
+                <td><button class="iconbtn rowact" style="width:26px;height:26px"><svg class="ico sm"><use href="#i-chev-r"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><span class="ck" aria-checked="false" role="checkbox"></span></td>
+                <td><div class="cell-prod"><div class="thumb">爪</div><div style="min-width:0"><b>柔性夹爪 2 指</b><code>gripper-soft</code></div></div></td>
+                <td class="extra">末端执行器</td>
+                <td><span class="pill pill--ok"><i></i>在售</span></td>
+                <td><div class="stock"><span class="stock__n">118</span><span class="bar"><i style="width:79%"></i></span></div></td>
+                <td class="price">¥1,280</td>
+                <td class="extra"><span style="color:var(--color-muted);font-variant-numeric:tabular-nums;font-size:11.5px">05:02</span></td>
+                <td><button class="iconbtn rowact" style="width:26px;height:26px"><svg class="ico sm"><use href="#i-chev-r"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><span class="ck" aria-checked="false" role="checkbox"></span></td>
+                <td><div class="cell-prod"><div class="thumb">雷</div><div style="min-width:0"><b>360° 激光雷达</b><code>lidar-360</code></div></div></td>
+                <td class="extra">传感</td>
+                <td><span class="pill pill--draft"><i></i>草稿</span></td>
+                <td><div class="stock"><span class="stock__n muted">0</span><span class="bar"><i class="zero" style="width:3%"></i></span></div></td>
+                <td class="price">¥4,600</td>
+                <td class="extra"><span style="color:var(--color-muted);font-variant-numeric:tabular-nums;font-size:11.5px">11-15 22:41</span></td>
+                <td><button class="iconbtn rowact" style="width:26px;height:26px"><svg class="ico sm"><use href="#i-chev-r"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><span class="ck" aria-checked="false" role="checkbox"></span></td>
+                <td><div class="cell-prod"><div class="thumb">伺</div><div style="min-width:0"><b>伺服驱动器 400W</b><code>servo-driver</code></div></div></td>
+                <td class="extra">驱动</td>
+                <td><span class="pill pill--ok"><i></i>在售</span></td>
+                <td><div class="stock"><span class="stock__n">27</span><span class="bar"><i class="warn" style="width:34%"></i></span></div></td>
+                <td class="price">¥2,150</td>
+                <td class="extra"><span style="color:var(--color-muted);font-variant-numeric:tabular-nums;font-size:11.5px">11-15 20:15</span></td>
+                <td><button class="iconbtn rowact" style="width:26px;height:26px"><svg class="ico sm"><use href="#i-chev-r"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><span class="ck" aria-checked="false" role="checkbox"></span></td>
+                <td><div class="cell-prod"><div class="thumb">底</div><div style="min-width:0"><b>麦克纳姆轮底盘</b><code>chassis-mecanum</code></div></div></td>
+                <td class="extra">底盘</td>
+                <td><span class="pill pill--off"><i></i>已下架</span></td>
+                <td><div class="stock"><span class="stock__n muted">9</span><span class="bar"><i class="warn" style="width:12%"></i></span></div></td>
+                <td class="price">¥8,900</td>
+                <td class="extra"><span style="color:var(--color-muted);font-variant-numeric:tabular-nums;font-size:11.5px">11-14 18:30</span></td>
+                <td><button class="iconbtn rowact" style="width:26px;height:26px"><svg class="ico sm"><use href="#i-chev-r"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><span class="ck" aria-checked="false" role="checkbox"></span></td>
+                <td><div class="cell-prod"><div class="thumb">电</div><div style="min-width:0"><b>48V 电池组 20Ah</b><code>battery-pack</code></div></div></td>
+                <td class="extra">电源</td>
+                <td><span class="pill pill--ok"><i></i>在售</span></td>
+                <td><div class="stock"><span class="stock__n">63</span><span class="bar"><i style="width:63%"></i></span></div></td>
+                <td class="price">¥1,690</td>
+                <td class="extra"><span style="color:var(--color-muted);font-variant-numeric:tabular-nums;font-size:11.5px">11-14 11:08</span></td>
+                <td><button class="iconbtn rowact" style="width:26px;height:26px"><svg class="ico sm"><use href="#i-chev-r"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><span class="ck" aria-checked="false" role="checkbox"></span></td>
+                <td><div class="cell-prod"><div class="thumb">谐</div><div style="min-width:0"><b>谐波减速器 SHG-20</b><code>harmonic-drive</code></div></div></td>
+                <td class="extra">传动</td>
+                <td><span class="pill pill--ok"><i></i>在售</span></td>
+                <td><div class="stock"><span class="stock__n">84</span><span class="bar"><i style="width:70%"></i></span></div></td>
+                <td class="price">¥3,280</td>
+                <td class="extra"><span style="color:var(--color-muted);font-variant-numeric:tabular-nums;font-size:11.5px">11-13 09:40</span></td>
+                <td><button class="iconbtn rowact" style="width:26px;height:26px"><svg class="ico sm"><use href="#i-chev-r"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><span class="ck" aria-checked="false" role="checkbox"></span></td>
+                <td><div class="cell-prod"><div class="thumb">视</div><div style="min-width:0"><b>工业视觉相机 5MP</b><code>vision-cam-5mp</code></div></div></td>
+                <td class="extra">视觉</td>
+                <td><span class="pill pill--ok"><i></i>在售</span></td>
+                <td><div class="stock"><span class="stock__n">15</span><span class="bar"><i class="warn" style="width:25%"></i></span></div></td>
+                <td class="price">¥5,400</td>
+                <td class="extra"><span style="color:var(--color-muted);font-variant-numeric:tabular-nums;font-size:11.5px">11-12 16:22</span></td>
+                <td><button class="iconbtn rowact" style="width:26px;height:26px"><svg class="ico sm"><use href="#i-chev-r"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><span class="ck" aria-checked="false" role="checkbox"></span></td>
+                <td><div class="cell-prod"><div class="thumb">急</div><div style="min-width:0"><b>急停按钮模块</b><code>estop-module</code></div></div></td>
+                <td class="extra">安全</td>
+                <td><span class="pill pill--draft"><i></i>草稿</span></td>
+                <td><div class="stock"><span class="stock__n muted">0</span><span class="bar"><i class="zero" style="width:3%"></i></span></div></td>
+                <td class="price">¥260</td>
+                <td class="extra"><span style="color:var(--color-muted);font-variant-numeric:tabular-nums;font-size:11.5px">11-11 10:05</span></td>
+                <td><button class="iconbtn rowact" style="width:26px;height:26px"><svg class="ico sm"><use href="#i-chev-r"/></svg></button></td>
+              </tr>
+              <tr>
+                <td><span class="ck" aria-checked="false" role="checkbox"></span></td>
+                <td><div class="cell-prod"><div class="thumb">架</div><div style="min-width:0"><b>铝合金安装支架</b><code>alu-bracket</code></div></div></td>
+                <td class="extra">结构</td>
+                <td><span class="pill pill--ok"><i></i>在售</span></td>
+                <td><div class="stock"><span class="stock__n">240</span><span class="bar"><i style="width:80%"></i></span></div></td>
+                <td class="price">¥420</td>
+                <td class="extra"><span style="color:var(--color-muted);font-variant-numeric:tabular-nums;font-size:11.5px">11-10 14:48</span></td>
+                <td><button class="iconbtn rowact" style="width:26px;height:26px"><svg class="ico sm"><use href="#i-chev-r"/></svg></button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="tbl__foot">
+          <span>第 1–10 项，共 1,284 项</span>
+          <span style="color:var(--color-border-strong)">·</span>
+          <button class="mini" style="height:24px">批量操作<svg class="ico sm"><use href="#i-chev-d"/></svg></button>
+          <div class="pager">
+            <button class="pg">‹</button>
+            <button class="pg" aria-current="page">1</button>
+            <button class="pg">2</button>
+            <button class="pg">3</button>
+            <span style="color:var(--color-subtle);padding:0 4px">…</span>
+            <button class="pg">214</button>
+            <button class="pg">›</button>
+          </div>
+        </div>
+        <div style="height:20px"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 常驻检查器 -->
+  <aside class="insp">
+    <div class="insp__head">
+      <div class="insp__top">
+        <div class="insp__thumb">臂</div>
+        <div style="min-width:0">
+          <div class="insp__name">六轴机械臂 Pro</div>
+          <div class="insp__slug">robot-arm-pro</div>
+        </div>
+        <button class="insp__x" id="closeInsp"><svg class="ico sm"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="tabs">
+        <button class="tab" aria-selected="true">概览</button>
+        <button class="tab">变体<span>3</span></button>
+        <button class="tab">媒体<span>12</span></button>
+        <button class="tab">SEO</button>
+      </div>
+    </div>
+
+    <div class="insp__body">
+      <div class="sect">
+        <div class="sect__k">状态与归属</div>
+        <dl class="kv">
+          <dt>状态</dt><dd><span class="pill pill--ok"><i></i>在售</span></dd>
+          <dt>分类</dt><dd>工业机器人 / 机械臂</dd>
+          <dt>更新时间</dt><dd class="num">11-16 06:20</dd>
+        </dl>
+      </div>
+
+      <div class="sect">
+        <div class="sect__k">变体<svg class="ico sm" style="margin-left:auto"><use href="#i-plus"/></svg></div>
+        <div class="varrow">
+          <code>ARM-PRO-500</code>
+          <div class="varrow__meta"><b>¥12,800</b><em>库存 18</em></div>
+        </div>
+        <div class="varrow">
+          <code>ARM-PRO-700</code>
+          <div class="varrow__meta"><b>¥15,600</b><em>库存 12</em></div>
+        </div>
+        <div class="varrow varrow--out">
+          <code>ARM-PRO-900</code>
+          <div class="varrow__meta"><b>¥19,800</b><em style="color:var(--color-danger)">缺货</em></div>
+        </div>
+      </div>
+
+      <div class="sect">
+        <div class="sect__k">库存水位</div>
+        <div class="stock" style="justify-content:flex-start;gap:10px">
+          <span class="stock__n num" style="font-size:15px">30</span>
+          <span style="font-size:11.5px;color:var(--color-muted)">/ 48 可售</span>
+        </div>
+        <span class="bar" style="width:100%;margin-top:8px"><i style="width:62%"></i></span>
+      </div>
+
+      <div class="callout">
+        <svg class="ico sm"><use href="#i-alert"/></svg>
+        <div>1 个变体缺货，前台已自动隐藏该档位。补货后可一键恢复上架。</div>
+      </div>
+    </div>
+
+    <div class="insp__foot">
+      <button class="btn">取消</button>
+      <button class="btn btn--primary">保存变更</button>
+    </div>
+  </aside>
+</div>
+
+<!-- 命令面板 -->
+<div class="palette" id="palette" hidden>
+  <div class="pal">
+    <div class="pal__in">
+      <svg class="ico"><use href="#i-search"/></svg>
+      <input id="palInput" placeholder="搜索商品、订单、客户，或执行命令…" autocomplete="off">
+      <kbd style="font-family:var(--font-mono);font-size:10px;color:var(--color-subtle)">ESC</kbd>
+    </div>
+    <div class="pal__body">
+      <div class="pal__g">商品</div>
+      <div class="pal__i"><svg class="ico sm"><use href="#i-box"/></svg>六轴机械臂 Pro<small>robot-arm-pro</small></div>
+      <div class="pal__i"><svg class="ico sm"><use href="#i-box"/></svg>柔性夹爪 2 指<small>gripper-soft</small></div>
+      <div class="pal__i"><svg class="ico sm"><use href="#i-box"/></svg>360° 激光雷达<small>lidar-360</small></div>
+      <div class="pal__g">命令</div>
+      <div class="pal__i" data-on><svg class="ico sm"><use href="#i-plus"/></svg>新建商品<small>⌘N</small></div>
+      <div class="pal__i"><svg class="ico sm"><use href="#i-upload"/></svg>导入 CSV<small>⌘I</small></div>
+      <div class="pal__i"><svg class="ico sm"><use href="#i-trend"/></svg>导出当前筛选<small>⌘E</small></div>
+      <div class="pal__i"><svg class="ico sm"><use href="#i-side"/></svg>切换紧凑密度<small>⌘⇧D</small></div>
+    </div>
+    <div class="pal__foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd>选择</span>
+      <span><kbd>↵</kbd>打开</span>
+      <span><kbd>esc</kbd>关闭</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const pal = $('#palette');
+
+$('#openPal').onclick = () => { pal.hidden = false; $('#palInput').focus(); };
+pal.onclick = e => { if (e.target === pal) pal.hidden = true; };
+$('#palInput').oninput = e => {
+  const q = e.target.value.trim();
+  document.querySelectorAll('.pal__i').forEach(el => {
+    el.style.display = !q || el.textContent.includes(q) ? '' : 'none';
+  });
+};
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); pal.hidden = false; $('#palInput').focus(); }
+  if (e.key === 'Escape') pal.hidden = true;
+});
+
+$('#density').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.documentElement.dataset.density = b.dataset.d;
+  [...$('#density').children].forEach(x => x.setAttribute('aria-pressed', x === b));
+};
+
+$('#toggleTheme').onclick = () => {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+  $('#themeIcon').setAttribute('href', dark ? '#i-moon' : '#i-sun');
+};
+
+$('#toggleInsp').onclick = () => {
+  document.body.dataset.insp = document.body.dataset.insp === 'off' ? 'on' : 'off';
+};
+$('#closeInsp').onclick = () => { document.body.dataset.insp = 'off'; };
+
+// 表格选中态 + 复选框
+document.querySelectorAll('tbody tr').forEach(tr => {
+  tr.onclick = e => {
+    if (e.target.closest('.ck')) return;
+    document.querySelectorAll('tbody tr').forEach(x => x.removeAttribute('aria-selected'));
+    tr.setAttribute('aria-selected', 'true');
+  };
+});
+document.querySelectorAll('.ck').forEach(ck => {
+  ck.onclick = e => {
+    e.stopPropagation();
+    ck.setAttribute('aria-checked', ck.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+    ck.innerHTML = ck.getAttribute('aria-checked') === 'true' ? '<svg class="ico" style="width:11px;height:11px"><use href="#i-check"/></svg>' : '';
+  };
+});
+document.querySelectorAll('.chip').forEach(c => {
+  c.onclick = () => document.querySelectorAll('.chip').forEach(x => x.setAttribute('aria-pressed', x === c));
+});
+document.querySelectorAll('.tab').forEach(t => {
+  t.onclick = () => document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x === t));
+});
+</script>
+</body>
+</html>
