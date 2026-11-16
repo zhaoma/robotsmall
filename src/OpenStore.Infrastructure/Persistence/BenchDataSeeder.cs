@@ -462,6 +462,59 @@ public sealed record BenchSpec
 
     public string Describe()
         => $"{ProductCount} 商品 / {VariantCount} 变体 / {CategoryCount} 分类 / 每分类 {ProductsPerCategory}";
+
+    /// <summary>
+    /// 按层级汇总**子树成员数**。AC-12 量的是"分类页"，而分类页有两种都合法的成员语义
+    /// （<c>02</c> §4.9 第 ② 行两条路都在用）：<c>WHERE CategoryId=?</c>（直属）与
+    /// <c>Category.Path LIKE</c> 先取子树 id 集再筛（子树）。
+    /// 同一份数据在两种语义下，"最贵的那一页"差一个数量级 —— 所以这个数字必须跟着输出一起打，
+    /// 否则"每分类 500 ✅"会被读成"分类页指标已达标"，而它只描述了直属语义。
+    /// </summary>
+    /// <returns>深度 → (分类数, 该深度每个分类的子树成员数)。深度从 1 开始。</returns>
+    public IReadOnlyList<(int Depth, int CategoryCount, int SubtreeProducts)> SubtreeProductsByDepth()
+    {
+        var children = new Dictionary<int, List<int>>();
+        foreach (var c in Categories)
+        {
+            if (c.ParentIndex is { } parent)
+            {
+                if (!children.TryGetValue(parent, out var list))
+                {
+                    children[parent] = list = new List<int>();
+                }
+
+                list.Add(c.Index);
+            }
+        }
+
+        var subtree = new Dictionary<int, int>();
+
+        int Count(int index)
+        {
+            if (subtree.TryGetValue(index, out var cached))
+            {
+                return cached;
+            }
+
+            var total = ProductsPerCategory;
+            if (children.TryGetValue(index, out var kids))
+            {
+                foreach (var kid in kids)
+                {
+                    total += Count(kid);
+                }
+            }
+
+            subtree[index] = total;
+            return total;
+        }
+
+        return Categories
+            .GroupBy(c => c.Depth)
+            .OrderBy(g => g.Key)
+            .Select(g => (Depth: g.Key, CategoryCount: g.Count(), SubtreeProducts: Count(g.First().Index)))
+            .ToList();
+    }
 }
 
 /// <summary>单表指纹。行数与摘要必须一起出现：只有摘要看不出"哪张表少了"。  </summary>

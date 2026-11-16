@@ -163,6 +163,20 @@ internal static class SeedBenchCommand
         // 报告一旦被摘出来单独转发，"每分类 500" 会被直接读成"分类页指标已达标"。
         Console.WriteLine("category_check_scope=slug-segment（M0 无 ProductCategory 表；只证明列表数据量，不证明分类 join 成本）");
 
+        // 「每分类 500」只描述**直属**成员语义。而 AC-12 量的是分类页，分类页有两种都合法的
+        // 成员语义（02 §4.9 第 ② 行两条路都在用）：直属 `WHERE CategoryId=?`、子树 `Path LIKE`。
+        // 同一份数据在两种语义下"最贵的那一页"差一个数量级 —— 这两个数必须分开出现，
+        // 否则"每分类 500 ✅"会被读成"最坏页也 500"，而实际最坏页是根分类的 5000。
+        // 判据：**数量对了但最坏用例没覆盖，等于没测最该测的那一页。**
+        var levels = report.Spec.SubtreeProductsByDepth();
+        var levelText = string.Join("、", levels.Select(l => $"d{l.Depth}:{l.CategoryCount}个×{l.SubtreeProducts}件"));
+        var worstSubtree = levels.Count == 0 ? 0 : levels.Max(l => l.SubtreeProducts);
+        Console.WriteLine($"category_subtree_products={levelText}");
+        Console.WriteLine(
+            $"ac12_category_page=未定（最坏页取决于成员语义，直属 {report.Spec.ProductsPerCategory} / 子树 {worstSubtree}，差 " +
+            $"{(report.Spec.ProductsPerCategory == 0 ? 0 : worstSubtree / report.Spec.ProductsPerCategory)} 倍；" +
+            "M0 无 ProductCategory 表 ⇒ 选不出语义 ⇒ 本数据集不能用于 AC-12 分类页定量）");
+
         Console.WriteLine($"inserted_products={report.InsertedProducts}");
         Console.WriteLine($"inserted_variants={report.InsertedVariants}");
         Console.WriteLine($"skipped_products={report.SkippedProducts}");
