@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 文档锚点门禁：脚本里引用的 `docs/NN §x.y` 节号必须真实存在
+# 文档锚点门禁：脚本与文档里引用的 `docs/NN §x.y` 节号必须真实存在
 #
 # 用法：
-#   ./scripts/check-doc-anchors.sh              # 扫 scripts/*.sh 里的 docs/NN §x.y 引用
+#   ./scripts/check-doc-anchors.sh              # 扫 scripts/*.sh 与 docs/**/*.md 里的 docs/NN §x.y 引用
 #   ./scripts/check-doc-anchors.sh --self-test  # fail-before-pass 自证（正样本绿 + 两个注入红）
 #
 # 退出码：见 `docs/05 §4.6`（定义只在那里，本文件不复述）。
@@ -40,13 +40,34 @@ ROOT = os.getcwd()
 # 那条报错本身是对的（引用的文件确实没被核到），错的是**核错了文件**。
 REF = re.compile(r'docs/(\d{2})((?:-[^\s`\'"§]*?)?)\s*§\s*(\d+(?:\.\d+)*)')
 
-def md_files():
+def scan_refs(root):
+    """扫 scripts/*.sh **与** docs/**/*.md。
+
+    为什么必须扫 docs：docs→docs 的显式引用（`docs/05 §4.6`）以前没有任何门禁 ——
+    本脚本只扫 scripts/，于是一份文档可以引另一份文档里根本不存在的节号，
+    而两个文件各自都过门禁。这正是 `06` 里"退出码出处"那两处写法分叉的来源。
+
+    **只扫带 `docs/NN` 前缀的显式引用**。正文里大量裸 `§x.y`（实测 1730 处）语义上是
+    "本节文档自己的某节"，但本仓有 247 处裸引用指向的是**别的文档**的节
+    （如 `02-数据模型-M1落地对照表.md` 里的 `§6.2` 指 `02-数据模型.md`），
+    用"裸引用 = 本文档"去判会制造 247 条假红。**不能判的东西就不要假装判了** ——
+    它的处置是写全名，不是把猜测写进门禁。
+    """
     out = []
-    for dirpath, _, names in os.walk(os.path.join(ROOT, 'docs')):
-        for n in names:
-            if n.endswith('.md'):
-                out.append(os.path.join(dirpath, n))
-    return sorted(out)
+    for p in sorted(glob.glob(os.path.join(root, 'scripts', '*.sh'))):
+        for i, line in enumerate(io.open(p, encoding='utf-8'), 1):
+            for m in REF.finditer(line):
+                out.append((os.path.basename(p), i, m.group(1), m.group(2), m.group(3), m.group(0)))
+    d = os.path.join(root, 'docs')
+    for dp, _, names in os.walk(d):
+        for n in sorted(names):
+            if not n.endswith('.md'):
+                continue
+            p = os.path.join(dp, n)
+            for i, line in enumerate(io.open(p, encoding='utf-8'), 1):
+                for m in REF.finditer(line):
+                    out.append((os.path.relpath(p, root), i, m.group(1), m.group(2), m.group(3), m.group(0)))
+    return out
 
 def doc_candidates(prefix, suffix, root=ROOT):
     """返回候选文档路径列表。
@@ -80,18 +101,10 @@ def headings(path):
             got.add(m.group(1))
     return got
 
-def scan_scripts(root):
-    out = []
-    for p in sorted(glob.glob(os.path.join(root, 'scripts', '*.sh'))):
-        for i, line in enumerate(io.open(p, encoding='utf-8'), 1):
-            for m in REF.finditer(line):
-                out.append((os.path.basename(p), i, m.group(1), m.group(2), m.group(3), m.group(0)))
-    return out
-
 def judge(root):
     """返回 (失败列表, 引用总数)"""
     failures = []
-    refs = scan_scripts(root)
+    refs = scan_refs(root)
     cache = {}
     for script, line, prefix, suffix, num, raw in refs:
         cands = doc_candidates(prefix, suffix, root)
@@ -213,6 +226,18 @@ def self_test():
         check(len(f6) == 1 and '§9.9' in f6[0][1],
               '注入：写全名但该节只在同编号的另一篇里 → 必须红（证明没有退回 glob）：%s'
               % (f6[0][1][:60] if f6 else '未报红'))
+
+        # 方向七：**docs 里的显式引用也要被扫到**。以前的门禁只扫 scripts/*.sh，
+        # 文档 A 引文档 B 的悬空节号两边各自都绿。若少了这条注入，
+        # "scan_refs 里删掉 docs 那一半"不会让任何自证变红。
+        doc_dir = os.path.join(tmp, 'docref')
+        write_sample(doc_dir, 'docs/05-示例.md', SAMPLE_DOC)
+        write_sample(doc_dir, 'docs/06-调用方.md',
+                     '# 调用方\n\n退出码见 `docs/0' '5 §9.99`。\n')
+        f7, t7 = judge(doc_dir)
+        check(len(f7) == 1 and '§9.99' in f7[0][1] and t7 == 1,
+              '注入：docs 内引用不存在的 §9.99 → 必须红（证明 docs 也在扫描范围内）：%s'
+              % (f7[0][1][:60] if f7 else '未报红'))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -223,7 +248,7 @@ def self_test():
         print('== 自证失败：%d 项不符合预期' % len(failed))
         return 1
     print('== 自证通过：%d 项（正样本绿 / 文档改节号红 / 脚本引用不存在节红 / 跨文档编号缺失红'
-          ' / 同编号两篇时全名按全名核 / 全名指错篇必红）' % len(checks))
+          ' / 同编号两篇时全名按全名核 / 全名指错篇必红 / docs 内引用也在扫描范围内）' % len(checks))
     return 0
 
 args = sys.argv[1:]
