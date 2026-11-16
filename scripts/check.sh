@@ -276,6 +276,7 @@ if [ "$MODE" = "list" ]; then
   step 18 change_numbers      "变更编号台账（缺号/重号判红，行序错位只 WARN）"
   step 19 doc_anchors         "脚本引用的 docs/NN §节号必须真实存在"
   step 20 fixture             "AC-14a 验收 fixture 声明侧判据（不连库、不依赖 .NET）"
+  step 21 soak_self_test      "压测判定逻辑自证（跑 HEAD 版：验的是提交后的状态）"
   exit 0
 fi
 
@@ -424,6 +425,26 @@ if [ "${goto_summary:-0}" != "1" ]; then
   # （本轮真发生过：C7 用复合串 group_by，跨商品的 SKU 撞车永远抓不到，而它一直绿）。
   run_step 20 fixture "AC-14a 验收 fixture 声明侧判据" \
     bash -c './scripts/check-fixture.sh --self-test >/dev/null && ./scripts/check-fixture.sh'
+
+  # ---- 21 soak 判定逻辑自证（跑 HEAD 版，不跑工作区版）-------------------------
+  # `soak.sh --self-test` 早就交付、自证也有，却**没有任何入口在跑它**——今天实测
+  # `grep -rn soak scripts/check.sh scripts/verify-gates.sh` = 0 处（同 §18 的道理：
+  # 没被跑过的自证会烂掉，而它烂掉时没人知道，因为它的产物在 30 分钟压测之后）。
+  #
+  # **为什么要导出 HEAD 版，而不是直接跑工作区那份文件**：这道门的作用是给"提交后的
+  # 状态"背书。跑工作区版时，任何人正在编辑 soak.sh（今天发生过不止一次）都会让
+  # **别人的**门禁变红，而那种红的唯一后果是人学会跳过这一步。跑 HEAD 版则：
+  #   红 → HEAD 上的判定逻辑真的坏了（这是要报的）；
+  #   绿 → **但它是 HEAD 的读数，不是工作区的读数**。
+  # 所以下面那行来源必须打在 run_step 外面——run_step 只在失败时才回放日志，
+  # 打在里面的"来源"在绿的时候是看不见的，而**没有出处的绿等于一个没有单位的数**。
+  printf '     soak.sh 来源 = HEAD:%s\n' "$(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+  run_step 21 soak_self_test "压测判定逻辑自证（HEAD 版）" \
+    bash -c 'tmp=$(mktemp -d) || exit 2;
+             if ! git show HEAD:scripts/soak.sh > "$tmp/soak.sh" 2>/dev/null; then
+               printf "PRECONDITION: 取不到 HEAD:scripts/soak.sh（不是 git 工作区？）\n"; exit 2; fi
+             bash "$tmp/soak.sh" --self-test; rc=$?
+             rm -rf "$tmp"; exit $rc'
 fi
 
 # ---- 清单自证：--list 声明 == 实跑处理 -------------------------------------
