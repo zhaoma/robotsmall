@@ -34,7 +34,11 @@ namespace OpenStore.Infrastructure.Persistence.Repositories;
 /// 等于把"每次查询"记成"每次入库"，对账直接报废。
 /// </para>
 /// </remarks>
-public sealed class SqliteStockRepository(StoreDbContext db, IClock clock, int lowStockThreshold)
+public sealed class SqliteStockRepository(
+    StoreDbContext db,
+    IClock clock,
+    ICorrelationId correlationId,
+    int lowStockThreshold)
     : IStockRepository
 {
     /// <summary>低库存默认阈值（与前台 <c>low_stock</c> 的 5 件同口径，避免"前台说快没了、后台说不紧张"）。</summary>
@@ -294,7 +298,7 @@ public sealed class SqliteStockRepository(StoreDbContext db, IClock clock, int l
     private static StockItem ToDomain(StockItemRecord record)
         => StockItem.Rehydrate(record.VariantId, record.OnHand, record.Reserved, record.Sold, record.Version);
 
-    private static StockLedgerRecord ToRecord(Guid variantId, StockMovement movement) => new()
+    private StockLedgerRecord ToRecord(Guid variantId, StockMovement movement) => new()
     {
         VariantId = variantId,
         ChangeType = (int)movement.ChangeType,
@@ -310,7 +314,9 @@ public sealed class SqliteStockRepository(StoreDbContext db, IClock clock, int l
         OperatorType = (int)movement.Operator.Type,
         OperatorId = movement.Operator.Id,
         OperatorName = movement.Operator.Name,
-        CorrelationId = null,
+        // 关联标识：这条流水是哪一次请求写的。空值表示无 HTTP 上下文（后台任务/迁移），
+        // 不编造值——编出来的值会让所有后台写操作看起来来自同一次请求，比空值更误导。
+        CorrelationId = correlationId.Value,
         OccurredAt = movement.OccurredAt,
     };
 

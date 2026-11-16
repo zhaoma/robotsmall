@@ -43,6 +43,7 @@ builder.Services.AddScoped<IAdminProductQuery, SqliteAdminProductQuery>();
 builder.Services.AddScoped<IStockRepository>(sp => new SqliteStockRepository(
     sp.GetRequiredService<StoreDbContext>(),
     sp.GetRequiredService<IClock>(),
+    sp.GetRequiredService<ICorrelationId>(),
     builder.Configuration.GetValue("Inventory:LowStockThreshold", SqliteStockRepository.DefaultLowStockThreshold)));
 builder.Services.AddScoped<IAdminUserRepository, SqliteAdminUserRepository>();
 builder.Services.AddScoped<ISessionRepository, SqliteSessionRepository>();
@@ -52,6 +53,10 @@ builder.Services.AddHttpContextAccessor();
 
 // 当前身份：只从 ClaimsPrincipal 读（ICurrentUser 是"这是谁"的唯一入口，后端设计 §6.5）
 builder.Services.AddScoped<ICurrentUser, HttpCurrentUser>();
+
+// 关联标识：库存流水的 CorrelationId 列从这里取（优先复用调用方的 X-Request-Id，否则用 TraceIdentifier）。
+// 后台任务/迁移没有 HttpContext，此时值为 null —— 不编造，见 ICorrelationId 的注释。
+builder.Services.AddScoped<ICorrelationId, HttpCorrelationId>();
 
 // ---- 应用层用例 ----
 builder.Services.AddScoped<StorefrontProductQueryService>();
