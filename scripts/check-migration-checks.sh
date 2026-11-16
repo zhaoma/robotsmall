@@ -47,10 +47,32 @@ print_list() {
 EOF
 }
 
-# 从配置目录抽 CK 名
+# 从配置目录抽 CK 名。
+#
+# **不能只匹配 `HasCheckConstraint("CK_...` 这一个形状。** 曾经就是那样，代价是
+# **4 条里只看见 1 条**（20:58 实测：本式命中 1，真实 4）。同一条约束在本仓有三种
+# 合法 EF 写法，后两种一律返回空：
+#   ① 单行字面量   t.HasCheckConstraint("CK_X", "…")             ← 旧式唯一看得见的
+#   ② 多行调用     table.HasCheckConstraint(\n    "CK_Y",        ← 名字在下一行
+#   ③ 常量间接     HasCheckConstraint(DepthCheckName, "…")        ← 名字在同文件的 const 里
+#
+# 而 **"抽不到"与"真的没有"在输出上完全一样**：判据绿着，三条约束从未被它看过一眼。
+# 这与本脚本要抓的病同形（"配置声明了、库里没有"）——只不过这次缺的是**判据自己的视野**。
+#
+# 所以反过来做两步：先认出"这个文件里有 HasCheckConstraint"，再取该文件里所有
+# **带引号的** `CK_` 字面量。② ③ 因此自动覆盖（③ 的名字就在
+# `public const string DepthCheckName = "CK_Category_Depth"` 里）。
+#
+# 为什么限定"带引号"而不是"取所有 CK_ 串"：约束名必须是一个字符串才能进 DB，
+# 所以这就是它的**语义条件**，不是格式凑合。副产品是注释里裸写的 `CK_X` 不算声明。
+# （已知边界：注释里写成 `// use "CK_X"` 这种带引号的会误收。宁可多收——多收会让
+#  它去迁移里找，找不到就红，是响的；少收则是静默绿。）
 collect_conf() {
-  grep -rhoE 'HasCheckConstraint\("[^"]+"' "$1" 2>/dev/null \
-    | sed 's/.*("//; s/"$//' | LC_ALL=C sort -u
+  local f
+  find "$1" -name '*.cs' -type f 2>/dev/null | while IFS= read -r f; do
+    grep -q 'HasCheckConstraint' "$f" 2>/dev/null || continue
+    grep -oE '"CK_[A-Za-z0-9_]+"' "$f" 2>/dev/null | tr -d '"'
+  done | LC_ALL=C sort -u
 }
 
 # 从迁移目录抽 CK 名：排除 *.Designer.cs 与 StoreDbContextModelSnapshot.cs
@@ -180,12 +202,41 @@ self_test() {
     echo "  [FAIL] 样本5 期望 rc=2，实际 rc=$rc"; failures=$((failures+1))
   fi
 
+  # 样本 6：抽取式本身的三形态（**这一条是 20:58 那次漏报的直接产物**）
+  #
+  # 原来的 5 个样本全是 `printf 'b.HasCheckConstraint("CK_X", …)'` —— **单行字面量**。
+  # 五个样本都在测"判据对不对"，没有一个在测"抽取看不看得见"。而实测本仓 4 条约束里
+  # 3 条不是这个形状，判据绿着说"配置 1 个 CHECK 全部在迁移里创建"。
+  # 所以这里直接测 `collect_conf` 的输出集合，不绕经退出码 —— 退出码分不出"抽到 1 个且一致"
+  # 与"抽到 4 个且一致"。
+  mkdir -p "$tmp/s6/conf"
+  cat > "$tmp/s6/conf/AConfiguration.cs" <<'CS'
+public const string DepthCheckName = "CK_Six_Const";
+void Cfg() {
+    builder.ToTable("A", t => t.HasCheckConstraint("CK_Six_Inline", "\"X\" >= 0"));
+    builder.ToTable("B", t => table.HasCheckConstraint(
+        "CK_Six_Multiline",
+        "\"Y\" >= 0"));
+    builder.ToTable("C", t => t.HasCheckConstraint(DepthCheckName, "\"Z\" >= 0"));
+    // 注释里裸写的 CK_Six_Bare 不是声明（没有引号）
+}
+CS
+  local got6 want6
+  got6=$(printf '%s\n' "$(CK_SIX=1; collect_conf "$tmp/s6/conf")" | grep . | LC_ALL=C sort | tr '\n' ' ')
+  want6="CK_Six_Const CK_Six_Inline CK_Six_Multiline "
+  if [ "$got6" = "$want6" ]; then
+    echo "  [ok] 样本6 抽取覆盖三种写法（单行字面量 / 多行调用 / const 间接），注释里的裸串不算"
+  else
+    echo "  [FAIL] 样本6 抽取式漏了写法：期望 [$want6] 实得 [$got6]"
+    failures=$((failures+1))
+  fi
+
   echo
   if [ "$failures" -eq 0 ]; then
-    echo "自证通过：5/5"
+    echo "自证通过：6/6"
     return 0
   fi
-  echo "自证失败：$failures/5 条样本未达预期"
+  echo "自证失败：$failures/6 条样本未达预期"
   return 1
 }
 
