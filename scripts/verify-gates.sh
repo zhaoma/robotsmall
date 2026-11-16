@@ -7,8 +7,11 @@
 #   ./scripts/verify-gates.sh --only=V3    # 只跑一条
 #   ./scripts/verify-gates.sh --list
 #
-# 退出码：0 全部注入都被拦住 / 1 至少一条门禁是摆设 / 2 用法或环境错误
-#         3 注入靶点已有未提交改动（基线不干净，拒绝开跑）
+# 退出码：见 `docs/05 §4.6`（0/1/2/3 的定义**只在那里**，本文件不复述数字含义）。
+#   本脚本落到这四个码上的情形：0 全部注入都被拦住 / 1 至少一条门禁是摆设（真缺陷）
+#   / 2 未验证（基线构建失败、注入靶点有未提交改动而拒跑、环境缺依赖）/ 3 用法错误。
+#   注意："靶点脏"属**未验证**（今天没法测），不是"门禁坏了" —— 两者混了，
+#   值班的人会去查代码，而实际该做的是等改文件的人提交。
 #
 # -----------------------------------------------------------------------------
 # 为什么不用户手工维护的 .patch 文件
@@ -48,18 +51,21 @@ case ":$PATH:" in
 esac
 
 ONLY=""
+SELF_TEST=0
 case "${1:-}" in
   --only=*) ONLY="${1#--only=}" ;;
+  --self-test) SELF_TEST=1 ;;
   --list)
     grep -oE 'V[0-9]+ (layering|bounded_contexts|authorization|storefront_dto|templates|themes|migrations|domain_tests|doc_version_refs)' "$0" \
       | sort -u -V
     exit 0 ;;
   "") ;;
-  *) echo "unknown arg: $1" >&2; exit 2 ;;
+  *) echo "unknown arg: $1" >&2; exit 3 ;;
 esac
 
 BAKDIR="$(mktemp -d)"
 declare -a BACKUPS=()
+
 PASS=0; FAIL=0; SKIPN=0
 FAILED=()
 
@@ -81,6 +87,7 @@ cleanup() { restore_files; rm -rf "$BAKDIR"; }
 trap cleanup EXIT INT TERM
 
 say()  { printf '%s\n' "$*"; }
+
 head_of() { sed -e 's/^/    /' "$1" | head -"${2:-12}"; }
 
 # 靠模式发现目标文件；找不到就返回 1（调用方必须据此大声失败）
@@ -112,20 +119,24 @@ find_one() {
 # 再加一条 → NU1504 重复引用 → 构建失败 → 门禁"红了"但红在编译器上 → 判 WRONG-RED。
 # 而人看到 WRONG-RED 的第一反应是"锚点漂了，去改锚点"，真正的原因（树脏了）就被埋掉，
 # 还会顺手把一条本来正确的注入改坏。所以宁可在这里响亮地停住。
+# 靶点洁净判定的**唯一算点**。返回 0 = 干净可注入；2 = 脏，拒绝开跑（= 未验证，不是缺陷）。
+# 抽成函数是为了能被 --self-test 直接喂输入验返回码 —— 退出码是契约，契约要可测。
+dirty_guard() {  # $1 注入靶点文件
+  local file="$1" st
+  [ -d .git ] || return 0
+  st="$(git status --porcelain -- "$file" 2>/dev/null || true)"
+  [ -n "$st" ] || return 0
+  say ""
+  say "== 前置检查失败：注入靶点有未提交改动 =="
+  say "  $st"
+  say "  注入必须从干净基线出发，否则残留会叠加，结果不可解释（见 snapshot 注释）。"
+  say "  确认这处改动是残留而非你在保留的修改，然后：git checkout -- $file"
+  return 2
+}
+
 snapshot() {
   local file="$1"
-  local st
-  if [ -d .git ]; then
-    st="$(git status --porcelain -- "$file" 2>/dev/null || true)"
-    if [ -n "$st" ]; then
-      say ""
-      say "== 前置检查失败：注入靶点有未提交改动 =="
-      say "  $st"
-      say "  注入必须从干净基线出发，否则残留会叠加，结果不可解释（见 snapshot 注释）。"
-      say "  确认这处改动是残留而非你在保留的修改，然后：git checkout -- $file"
-      exit 3
-    fi
-  fi
+  dirty_guard "$file" || exit 2
 
   local bak="$BAKDIR/$(printf '%s' "$file" | tr '/' '_')"
   cp -f "$file" "$bak"
@@ -160,6 +171,78 @@ require_target() {
 }
 
 # 前置：先构建一次，确保基线是绿的。基线不绿的话所有"变红"都没有意义。
+# --- 自证入口：必须放在 say() 与 dirty_guard() 都定义之后 ----------------
+# 自证入口放在 say 定义之后：dirty_guard 会用 say 打印原因，
+# 在它之前调用会得到 rc=127（command not found）而不是判定结果。
+# -----------------------------------------------------------------------------
+# 退出码自证（`--self-test`，不跑注入、不碰 dotnet，秒级）
+# -----------------------------------------------------------------------------
+# 这里只覆盖 2 与 3：0（全部注入被拦住）与 1（有一条是摆设）**只有跑完 `--list` 列出的全部注入才能得出**，
+# 在本函数里伪造一个"全绿"只会变成第二个真相。所以本自证明确不假装覆盖它们 ——
+# 那两个码由真实全量跑给出（跑完末行是 `== 汇总: proven=N failed=0 ==` + rc=0，或 rc=1）。
+self_test_exit_codes() {
+  local failn=0 total=0 tmp probe rc
+
+  total=$((total+1))
+  bash "$0" --definitely-not-an-arg >/dev/null 2>&1; rc=$?
+  if [ "$rc" = "3" ]; then
+    printf '  ok    不认识参数 → rc=3（用法错误，不是"未验证"）\n'
+  else
+    printf '  WRONG 不认识参数 → 期望 rc=3 实得 rc=%s\n' "$rc"
+    failn=$((failn+1))
+  fi
+
+  # 脏靶点：用一个**未跟踪**的临时文件（`git status --porcelain` 对它会输出 `?? …`），
+  # 这样不需要改动任何真实靶点，也不会留下"注入改坏文件"的风险。
+  tmp=".verify-gates-selftest-probe.$$"
+  : > "$tmp"
+  total=$((total+1))
+  dirty_guard "$tmp" >/dev/null 2>&1; rc=$?
+  if [ "$rc" = "2" ]; then
+    printf '  ok    靶点有未提交改动 → rc=2（未验证，不是缺陷）\n'
+  else
+    printf '  WRONG 脏靶点 → 期望 rc=2 实得 rc=%s\n' "$rc"
+    failn=$((failn+1))
+  fi
+  rm -f "$tmp"
+
+  # 干净靶点：**不能拿本脚本自己当样本** —— 跑自证时它通常正处于被编辑状态，
+  # 那样"干净分支"会永远红，而人只会把这条断言删掉。改成从已跟踪脚本里挑一个当前
+  # 没有改动的；一个都挑不到就明确说"本次未验"，绝不假装通过。
+  local cand=""
+  while read -r f; do
+    [ -n "$f" ] || continue
+    [ -z "$(git status --porcelain -- "$f" 2>/dev/null)" ] && { cand="$f"; break; }
+  done <<EOF
+$(git ls-files -- 'scripts/*.sh' 2>/dev/null | head -20)
+EOF
+  if [ -n "$cand" ]; then
+    total=$((total+1))
+    dirty_guard "$cand" >/dev/null 2>&1; rc=$?
+    if [ "$rc" = "0" ]; then
+      printf '  ok    干净靶点（%s）→ rc=0（可以注入）\n' "$cand"
+    else
+      printf '  WRONG 干净靶点（%s）→ 期望 rc=0 实得 rc=%s\n' "$cand" "$rc"
+      failn=$((failn+1))
+    fi
+  else
+    printf '  SKIP  干净靶点：当前所有 scripts/*.sh 都有未提交改动 → 本次未验（不当通过）\n'
+  fi
+
+  echo
+  if [ "$failn" -eq 0 ]; then
+    printf '== 自证通过：%s 项（覆盖 rc=2/3；rc=0/1 需跑完 --list 列出的全部注入才能得出，本自证不伪造）==\n' "$total"
+    return 0
+  fi
+  printf '== 自证失败：%s/%s 项 ==\n' "$failn" "$total"
+  return 1
+}
+
+if [ "$SELF_TEST" = "1" ]; then
+  self_test_exit_codes
+  exit $?
+fi
+
 say "== 0) 基线检查（必须先绿）=="
 if ! dotnet build OpenStore.sln -warnaserror --nologo -v q >"$BAKDIR/baseline.log" 2>&1; then
   say "基线构建失败，门禁自证无意义（变红可能只是因为本来就是红的）。"

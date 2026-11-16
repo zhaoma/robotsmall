@@ -16,11 +16,11 @@
 #       --out-of-stock   /zh/products/sold-out   # 不给则从 sitemap 自动找
 #   ./scripts/verify-seo-matrix.sh --self-test     # fail-before-pass 自证（本地 mock，不连真站）
 #
-# 退出码语义（**必须写死，否则会有人用 `[ $? -le 2 ]` 把"未验证"当"通过"**）:
-#   0 = 全绿（唯一通过态）
-#   1 = 有断言失败
-#   2 = 前置条件缺失（缺 sitemap / 缺可筛选属性 / 缺归档或缺货 fixture）→ **等价于不通过**
-# CI 里只允许 0；退出码 2 必须报"未验证"，不得静默放过。
+# 退出码：见 `docs/05 §4.6`（0/1/2/3 的定义**只在那里**，本文件不复述数字含义）。
+#   本脚本落到这四个码上的情形：0 全绿（唯一通过态）/ 1 有断言失败
+#   / 2 前置条件缺失（缺 sitemap、缺可筛选属性、缺归档或缺货 fixture）= 未验证
+#   / 3 用法错误（参数不认识、没给站点地址）。
+# CI 里只允许 0。**不要把 2 和 1 混**：2 是"今天没测成"，1 是"站点真的错了"。
 set -uo pipefail
 
 BASE=""
@@ -46,7 +46,7 @@ while [ $# -gt 0 ]; do
     --moved-to)        MOVED_TO="$2"; shift 2 ;;
     --out-of-stock)    OOS="$2"; shift 2 ;;
     -h|--help)         sed -n '2,30p' "$0"; exit 0 ;;
-    -*)                echo "未知参数: $1" >&2; exit 2 ;;
+    -*)                echo "未知参数: $1" >&2; exit 3 ;;
     *)                 BASE="${1%/}"; shift ;;
   esac
 done
@@ -654,7 +654,20 @@ v14|旧 slug 仍返 200（同一商品两个 URL 并存）|S9 规则4 旧 slug �
 v15|旧 slug 301 到错的页面（落点仍 200，只有目标比对能抓）|S9 规则4 301 目标不是新 slug
 CASES
   rm -rf "$tmp"
-  [ "$sfail" -eq 0 ] && { echo "== 自证通过：正样本绿；${ninj} 个注入各自红在预期断言上"; return 0; }
+
+  # 用法错误（rc=3）：这一码只能由进程自己给出 —— 上面的注入都跑在函数内，
+  # 碰不到参数解析。两个入口都要验：不认识参数、没给站点地址。
+  # 断言"正好是 3"而不是"非零"：非零里还有 1（站点真错）和 2（没测成），
+  # 混在一起就分不清"我命令敲错了"和"站点坏了"。
+  local rc_bogus rc_nobase
+  bash "$0" --definitely-not-an-arg >/dev/null 2>&1; rc_bogus=$?
+  bash "$0" >/dev/null 2>&1; rc_nobase=$?
+  sfail_before=$sfail
+  [ "$rc_bogus" = "3" ] || { echo "  WRONG 不认识参数 → 期望 rc=3 实得 rc=$rc_bogus"; sfail=$((sfail+1)); }
+  [ "$rc_nobase" = "3" ] || { echo "  WRONG 没给站点地址 → 期望 rc=3 实得 rc=$rc_nobase"; sfail=$((sfail+1)); }
+  [ "$sfail" = "$sfail_before" ] && echo "  ok    用法错误（不认识参数 / 没给地址）→ rc=3，与 1/2 区分开"
+
+  [ "$sfail" -eq 0 ] && { echo "== 自证通过：正样本绿；${ninj} 个注入各自红在预期断言上；用法错误 rc=3"; return 0; }
   echo "== 自证失败：$sfail 项不符合预期"; return 1
 }
 
@@ -663,5 +676,7 @@ trap 'rm -f "$HF" "$BF"' EXIT
 
 if [ "${SELF_TEST}" = "1" ]; then self_test; exit $?; fi
 
-[ -n "$BASE" ] || { echo "用法: $0 https://shop.example.com [--locale en] [--archived-moved P --archived-gone P --archived-gone-from P --moved-from P --moved-to P --out-of-stock P] | --self-test" >&2; exit 2; }
+# 没给站点地址 = 你不知道要测谁 —— 这是用法错误（3），不是"未验证"（2）。
+# 2 留给"给了地址但站点/夹具不全"，那种情况脚本能自己说清缺什么。
+[ -n "$BASE" ] || { echo "用法: $0 https://shop.example.com [--locale en] [--archived-moved P --archived-gone P --archived-gone-from P --moved-from P --moved-to P --out-of-stock P] | --self-test" >&2; exit 3; }
 run_matrix; exit $?

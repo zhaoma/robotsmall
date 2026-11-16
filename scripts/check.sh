@@ -8,7 +8,11 @@
 #   ./scripts/check.sh --fast     # 只跑 1~6 步（提交前用，目标 < 90 秒）
 #   ./scripts/check.sh --list     # 只列步骤，不执行
 #
-# 退出码：0 全绿 / 1 有步骤失败 / 2 用法错误
+# 退出码：见 `docs/05 §4.6`（0 通过 / 1 失败 / 2 未验证 / 3 用法错误 的**定义只在那里**，
+#         本文件不复述数字含义 —— 四份各自写一遍，就是四份会各自漂的真相）。
+#   本脚本相关的一条契约：默认模式 skipped>0 仍退 0，但末行打印 `VERDICT: PARTIAL(p/n)`；
+#   `--full` 下 skipped>0 退 2（`--full` 承诺"全部"，有跳过即不成立）；
+#   要"全量通过"这个判断，就调 `--full` 并认 `VERDICT: PASS(n/n)`。
 #
 # 设计约束（改这个脚本前请先读）：
 #   1. 每步失败必须打印 `GATE FAILED: <规则名>`，规则名固定且被 CI 与文档引用。
@@ -27,9 +31,74 @@ case "${1:-}" in
   --full) MODE="full" ;;
   --fast) MODE="fast" ;;
   --list) MODE="list" ;;
+  --self-test) MODE="selftest" ;;
   "")     MODE="default" ;;
-  *)      echo "unknown arg: $1" >&2; exit 2 ;;
+  *)      echo "unknown arg: $1" >&2; exit 3 ;;
 esac
+
+# ---------------------------------------------------------------------------
+# 退出码的唯一算点：**汇总之后不再有任何 if 各自 exit**，否则同一个脚本里会出现
+# 两套"什么算通过"。抽成函数是为了能被 --self-test 直接喂四个输入验四个码 ——
+# 退出码是契约，契约必须可测，而不是"跑一遍看看是不是 0"。
+# ---------------------------------------------------------------------------
+verdict_token() {  # $1 pass $2 fail $3 skip $4 mode → stdout token；返回码 = 进程退出码
+  local p="$1" f="$2" k="$3" m="$4" n
+  n=$((p + f + k))
+  if [ "$f" -gt 0 ]; then
+    printf 'VERDICT: FAIL(%s/%s)' "$p" "$n"; return 1
+  fi
+  if [ "$k" -gt 0 ] && [ "$m" = "full" ]; then
+    printf 'VERDICT: PARTIAL(%s/%s)' "$p" "$n"; return 2
+  fi
+  if [ "$k" -gt 0 ]; then
+    printf 'VERDICT: PARTIAL(%s/%s)' "$p" "$n"; return 0
+  fi
+  printf 'VERDICT: PASS(%s/%s)' "$p" "$n"; return 0
+}
+
+self_test_exit_codes() {
+  local failn=0 total=0
+  vc() {  # $1 名称 $2 期望码 $3 期望 token $4 pass $5 fail $6 skip $7 mode
+    local name="$1" want_rc="$2" want_tok="$3" out rc
+    total=$((total+1))
+    out=$(verdict_token "$4" "$5" "$6" "$7"); rc=$?
+    if [ "$rc" = "$want_rc" ] && [ "$out" = "$want_tok" ]; then
+      printf '  ok    %s → %s（rc=%s）\n' "$name" "$out" "$rc"
+    else
+      printf '  WRONG %s → 期望=%s/rc=%s 实得=%s/rc=%s\n' "$name" "$want_tok" "$want_rc" "$out" "$rc"
+      failn=$((failn+1))
+    fi
+  }
+  printf '== check.sh 退出码自证（四个码各一例，不跑构建）==\n'
+  vc "全绿"                          0 "VERDICT: PASS(18/18)"       18 0 0  default
+  vc "有步骤失败 → 1（即便也有跳过）"  1 "VERDICT: FAIL(17/18)"       17 1 0  default
+  vc "--full 下有跳过 → 2（承诺全部却不全）" 2 "VERDICT: PARTIAL(13/18)" 13 0 5 full
+  vc "默认模式有跳过 → 0 + PARTIAL（设计内的跳过不是异常）" 0 "VERDICT: PARTIAL(13/18)" 13 0 5 default
+
+  # 第四个码（3 = 用法错误）只能由进程自己给出：verdict_token 不参与参数解析。
+  local rc3
+  bash "$0" --definitely-not-an-arg >/dev/null 2>&1; rc3=$?
+  total=$((total+1))
+  if [ "$rc3" = "3" ]; then
+    printf '  ok    不认识参数 → rc=3（用法错误，不是"未验证"）\n'
+  else
+    printf '  WRONG 不认识参数 → 期望 rc=3 实得 rc=%s\n' "$rc3"
+    failn=$((failn+1))
+  fi
+
+  echo
+  if [ "$failn" -eq 0 ]; then
+    printf '== 自证通过：%s 项（0/1/2/3 各一例）==\n' "$total"
+    return 0
+  fi
+  printf '== 自证失败：%s/%s 项 ==\n' "$failn" "$total"
+  return 1
+}
+
+if [ "$MODE" = "selftest" ]; then
+  self_test_exit_codes
+  exit $?
+fi
 
 # ---------------------------------------------------------------------------
 # 环境自愈：本地 dotnet 安装在用户目录时必须补这两项，否则 dotnet-ef 会报
@@ -205,6 +274,8 @@ if [ "$MODE" = "list" ]; then
   step 16 table_integrity     "docs 表格孤行/列数不符/围栏未配对"
   step 17 bench_self_test     "基准数据生成器自证（幂等/确定性/受保护库/非法tier）"
   step 18 change_numbers      "变更编号台账（缺号/重号判红，行序错位只 WARN）"
+  step 19 doc_anchors         "脚本引用的 docs/NN §节号必须真实存在"
+  step 20 fixture             "AC-14a 验收 fixture 声明侧判据（不连库、不依赖 .NET）"
   exit 0
 fi
 
@@ -242,7 +313,15 @@ run_step 5 storefront_dto "前台数据隔离" \
 run_step 6 domain_tests "领域单测" \
   dotnet test tests/OpenStore.Domain.Tests --no-build --nologo --logger "console;verbosity=detailed"
 
-[ "$MODE" = "fast" ] && { echo; echo "== --fast 到此为止 =="; goto_summary=1; }
+# fixture 判据只读 tests/fixtures/*.json，1.7s、零依赖。**放在 fast 收口之前**：
+# 改数据文件而不跑代码测试是最常见的操作，若它只在 full 档跑，改数据的人 push 完就结束了。
+# 它的 --self-test（约 29s，17 条注入逐条必须变红）只在 full 档跑 —— 塞进 fast 会把
+# 90 秒目标直接顶穿，然后大家开始用 --no-verify。
+if [ "$MODE" = "fast" ]; then
+  run_step 20 fixture "AC-14a 验收 fixture 声明侧判据" \
+    bash -c './scripts/check-fixture.sh'
+  echo; echo "== --fast 到此为止 =="; goto_summary=1
+fi
 
 # ---- 7 集成测 ---------------------------------------------------------------
 if [ "${goto_summary:-0}" = "1" ]; then
@@ -330,6 +409,23 @@ else
     bash -c './scripts/check-change-numbers.sh --self-test && ./scripts/check-change-numbers.sh'
 fi
 
+# ---- 19 文档锚点 ------------------------------------------------------------
+# 本轮把"退出码含义"收进 docs/05 §4.6 一处，四个脚本头部改成指针。指针的价值全在
+# "指向的那一节真的存在"——文档一改节号，指针就静默指到别处，而脚本照样绿。
+# 这类漂移没有运行时症状，只能靠结构断言挡。先跑 --self-test 证明它抓得住。
+if [ "${goto_summary:-0}" != "1" ]; then
+  run_step 19 doc_anchors "脚本引用的 docs 节号真实存在" \
+    bash -c './scripts/check-doc-anchors.sh --self-test && ./scripts/check-doc-anchors.sh'
+
+  # ---- 20 AC-14a fixture（声明侧）--------------------------------------------
+  # 三值退出码（0 全过 / 1 有判据失败 / 2 前置缺失），见 docs/05 §4.6：
+  # **2 等价于不通过**，不许写成 `[ $? -le 1 ]`。
+  # --self-test 进 full 档的理由：判据会不会悄悄变成"永绿"，只有注入能发现
+  # （本轮真发生过：C7 用复合串 group_by，跨商品的 SKU 撞车永远抓不到，而它一直绿）。
+  run_step 20 fixture "AC-14a 验收 fixture 声明侧判据" \
+    bash -c './scripts/check-fixture.sh --self-test >/dev/null && ./scripts/check-fixture.sh'
+fi
+
 # ---- 清单自证：--list 声明 == 实跑处理 -------------------------------------
 # 步数写死连续错过三次（15→16 步时没跟着改、加 17、加 18）。根因不是"忘了改那个数字"：
 # `--list` 的静态表与下面 run_step 的实跑清单**本来就是两份**，谁也不会记得同时改。
@@ -363,9 +459,12 @@ echo
 echo "== 汇总: passed=$PASS failed=$FAIL skipped=$SKIP =="
 if [ "$FAIL" -gt 0 ]; then
   printf '失败步骤: %s\n' "${FAILED_NAMES[*]}"
-  exit 1
 fi
+# 末行 token 是给机器认的（退出码见 docs/05 §4.6）：默认模式的 5 个 skip 是里程碑设计，
+# 不是异常，所以它退 0；但要"全量通过"这个结论，必须调 --full 并认 PASS(n/n)。
+TOKEN=$(verdict_token "$PASS" "$FAIL" "$SKIP" "$MODE"); RC=$?
 if [ "$SKIP" -gt 0 ] && [ "$MODE" = "default" ]; then
-  echo "注意：有 $SKIP 步未实现（非 --full 模式）。发布前必须用 --full 再跑一次。"
+  echo "注意：有 $SKIP 步未实现（默认模式）。要「全量通过」这个结论请用 --full 并认 VERDICT: PASS。"
 fi
-exit 0
+echo "$TOKEN"
+exit "$RC"
