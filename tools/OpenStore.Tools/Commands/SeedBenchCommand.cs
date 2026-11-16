@@ -172,10 +172,13 @@ internal static class SeedBenchCommand
         var levelText = string.Join("、", levels.Select(l => $"d{l.Depth}:{l.CategoryCount}个×{l.SubtreeProducts}件"));
         var worstSubtree = levels.Count == 0 ? 0 : levels.Max(l => l.SubtreeProducts);
         Console.WriteLine($"category_subtree_products={levelText}");
+
+        // 语义已裁定（06 §4.1：分类页含子树商品，AC-12 基线页 = 根分类页），所以这里**不能**
+        // 再写"未定"。这行是数据侧的读数指引：造数器知道最贵那页有多大，压测才知道该压哪一页。
+        // 反过来，若哪天裁定变了而这行没跟着改，报告会拿叶分类页的漂亮数字去回答一个关于根分类页的问题。
         Console.WriteLine(
-            $"ac12_category_page=未定（最坏页取决于成员语义，直属 {report.Spec.ProductsPerCategory} / 子树 {worstSubtree}，差 " +
-            $"{(report.Spec.ProductsPerCategory == 0 ? 0 : worstSubtree / report.Spec.ProductsPerCategory)} 倍；" +
-            "M0 无 ProductCategory 表 ⇒ 选不出语义 ⇒ 本数据集不能用于 AC-12 分类页定量）");
+            $"ac12_category_page=根分类页（子树 {worstSubtree} 件；语义已裁定「分类页含子树」，见 06 §4.1——" +
+            $"直属 {report.Spec.ProductsPerCategory} 那一页不是 AC-12 的基线页）");
 
         Console.WriteLine($"inserted_products={report.InsertedProducts}");
         Console.WriteLine($"inserted_variants={report.InsertedVariants}");
