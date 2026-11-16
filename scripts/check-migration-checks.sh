@@ -120,7 +120,7 @@ self_test() {
   mkdir -p "$tmp/s1/conf" "$tmp/s1/mig"
   printf 'b.HasCheckConstraint("CK_A_Bit", "\\"Bit\\" IN (0,1)");\n' > "$tmp/s1/conf/XConfiguration.cs"
   printf 'table.CheckConstraint("CK_A_Bit", "\\"Bit\\" IN (0,1)");\n' > "$tmp/s1/mig/M1.cs"
-  if CK_CONF_DIR="$tmp/s1/conf" CK_MIG_DIR="$tmp/s1/mig" "$0" >/dev/null 2>&1; then
+  if CK_CONF_DIR="$tmp/s1/conf" CK_MIG_DIR="$tmp/s1/mig" bash "$0" >/dev/null 2>&1; then
     echo "  [ok] 样本1 配置与迁移一致 → 绿"
   else
     echo "  [FAIL] 样本1 配置与迁移一致，却判红了"; failures=$((failures+1))
@@ -131,7 +131,7 @@ self_test() {
   printf 'b.HasCheckConstraint("CK_B_Bit", "\\"Bit\\" IN (0,1)");\n' > "$tmp/s2/conf/XConfiguration.cs"
   printf 'table.CheckConstraint("CK_A_Bit", "\\"Bit\\" IN (0,1)");\n' > "$tmp/s2/mig/M1.cs"
   set +e
-  CK_CONF_DIR="$tmp/s2/conf" CK_MIG_DIR="$tmp/s2/mig" "$0" >/dev/null 2>&1
+  CK_CONF_DIR="$tmp/s2/conf" CK_MIG_DIR="$tmp/s2/mig" bash "$0" >/dev/null 2>&1
   local rc=$?
   set -e
   if [ "$rc" -eq 1 ]; then
@@ -145,7 +145,7 @@ self_test() {
   printf 'b.HasCheckConstraint("CK_C_Bit", "\\"Bit\\" IN (0,1)");\n' > "$tmp/s3/conf/XConfiguration.cs"
   printf 'table.CheckConstraint("CK_C_Bit", "\\"Bit\\" IN (0,1)");\n' > "$tmp/s3/mig/M1.Designer.cs"
   set +e
-  CK_CONF_DIR="$tmp/s3/conf" CK_MIG_DIR="$tmp/s3/mig" "$0" >/dev/null 2>&1
+  CK_CONF_DIR="$tmp/s3/conf" CK_MIG_DIR="$tmp/s3/mig" bash "$0" >/dev/null 2>&1
   rc=$?
   set -e
   if [ "$rc" -eq 1 ]; then
@@ -158,7 +158,7 @@ self_test() {
   mkdir -p "$tmp/s4/conf" "$tmp/s4/mig"
   printf 'table.CheckConstraint("CK_A_Bit", "x");\n' > "$tmp/s4/mig/M1.cs"
   set +e
-  CK_CONF_DIR="$tmp/s4/conf" CK_MIG_DIR="$tmp/s4/mig" "$0" >/dev/null 2>&1
+  CK_CONF_DIR="$tmp/s4/conf" CK_MIG_DIR="$tmp/s4/mig" bash "$0" >/dev/null 2>&1
   rc=$?
   set -e
   if [ "$rc" -eq 2 ]; then
@@ -171,7 +171,7 @@ self_test() {
   mkdir -p "$tmp/s5/conf"
   printf 'b.HasCheckConstraint("CK_A_Bit", "x");\n' > "$tmp/s5/conf/XConfiguration.cs"
   set +e
-  CK_CONF_DIR="$tmp/s5/conf" CK_MIG_DIR="$tmp/s5/mig-nope" "$0" >/dev/null 2>&1
+  CK_CONF_DIR="$tmp/s5/conf" CK_MIG_DIR="$tmp/s5/mig-nope" bash "$0" >/dev/null 2>&1
   rc=$?
   set -e
   if [ "$rc" -eq 2 ]; then

@@ -230,6 +230,14 @@ for n, i, ln in rows:
     kws, phrases = keywords(chg)
     secs = SEC.findall(where)
     wants_api = 'openapi' in where
+    # L2（节号存在性）必须先于 L3（节内有没有标识符）跑，而且必须对**每一行**跑。
+    # 原来它嵌在 `for s in secs` 里、排在 `if not kws: continue` 之后，于是
+    # 抽不出标识符的那些行（这批 33 行里有 17 行）的节号**一次都没被验过** ——
+    # 而"落点节号被改过"正是本轮真实发生过的引用漂移，它跟这一行有没有代码符号无关。
+    # "不存在的节号：无"在一半行没被检查的前提下是运气，不是结论。
+    for s in secs:
+        if section_range(s) is None:
+            l2_fail.append((n, s))
     if not kws:
         note = '  ← 只有散文短语，抽不出标识符：' + ' / '.join(phrases) if phrases else ''
         unkeyworded.append((n, chg + note))
@@ -243,8 +251,7 @@ for n, i, ln in rows:
         targets += 1
         r = section_range(s)
         if r is None:
-            l2_fail.append((n, s))
-            continue
+            continue  # L2 已在进入本循环前统一记过，这里不重复记
         body = norm('\n'.join(lines[r[0]:r[1]]))
         hit_k = [k for k in kws if norm(k) in body]
         if hit_k:
