@@ -262,6 +262,7 @@ public sealed class SqliteStockRepository(StoreDbContext db, IClock clock, int l
                 l.Reason,
                 l.OrderId,
                 l.OperatorType,
+                l.OperatorId,
                 l.OperatorName,
                 l.OccurredAt,
             })
@@ -282,6 +283,7 @@ public sealed class SqliteStockRepository(StoreDbContext db, IClock clock, int l
                 l.Reason,
                 l.OrderId,
                 (StockOperatorType)l.OperatorType,
+                l.OperatorId,
                 l.OperatorName,
                 l.OccurredAt))
             .ToList();

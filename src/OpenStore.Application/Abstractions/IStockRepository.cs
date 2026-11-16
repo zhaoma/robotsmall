@@ -60,6 +60,7 @@ public sealed record StockMovementDto(
     string? Reason,
     Guid? OrderId,
     StockOperatorType OperatorType,
+    Guid? OperatorId,
     string? OperatorName,
     DateTimeOffset OccurredAt);
 
