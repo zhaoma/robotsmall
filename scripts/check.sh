@@ -404,11 +404,17 @@ else
   fi
 
   # ---- 9~10 模板与主题 ------------------------------------------------------
+  # **都不带 `--no-build`**，理由与第 17 步同一句：tools 工程不在 `OpenStore.sln` 里
+  # （`grep -c OpenStore.Tools OpenStore.sln` → 0），第 1 步的 `dotnet build` 不覆盖它。
+  # 这两条曾经带 `--no-build`，症状是**在干净 checkout 上必红**（产物不存在），
+  # 而在跑过一次的机器上绿 —— 于是"任何人第一次跑全量门禁都会撞上假红"，而作者
+  # 因为自己机器上有产物，永远复现不出来。
+  # 同一个工程三处调用两种写法，是这类假红的温床：**判据的一致性不能靠人记得**。
   run_step 9 templates "行业模板 schema" \
-    dotnet run --project tools/OpenStore.Tools --no-build -- check-templates
+    dotnet run --project tools/OpenStore.Tools -- check-templates
 
   run_step 10 themes "主题与 token" \
-    dotnet run --project tools/OpenStore.Tools --no-build -- check-themes
+    dotnet run --project tools/OpenStore.Tools -- check-themes
 
   # ---- 11~14 尚未实现 ------------------------------------------------------
   skip_step 11 contract_drift "M2 引入（OpenAPI + pnpm gen:types）"
