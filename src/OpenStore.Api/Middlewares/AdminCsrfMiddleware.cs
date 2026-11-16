@@ -53,15 +53,21 @@ public sealed class AdminCsrfMiddleware(RequestDelegate next, ILogger<AdminCsrfM
             return;
         }
 
-        // ---- ① Origin 校验：所有 admin 请求都做，包括登录（防登录 CSRF） ----
-        // GET 也校验：admin 端没有"跨站 GET 拿数据"的正当场景（前端与 API 同源）。
-        EnsureSameOrigin(context);
-
+        // ---- ① 安全方法直接放行：CSRF 针对的是"有副作用的请求" ----
+        // 这一条必须放在 Origin 校验之前（曾经的写法是先校验 Origin，等于把所有 GET 打死）：
+        // 浏览器的同源 fetch() 发 GET/HEAD 时**不带 Origin 头**（按 Fetch 规范，Origin 只在
+        // CORS 请求与非 GET/HEAD 方法上发送）。先校验 Origin 的后果是 admin 前端每一次列表查询
+        // 都是 403 —— 而且 curl 也复现同样结果，很容易被误判成"session 失效"。
+        // 不做 Origin 校验也不会放大 CSRF 面：跨站 GET 的响应体受同源策略保护，攻击者读不到；
+        // 有副作用的请求都在下面的非安全方法里。
         if (SafeMethods.Contains(context.Request.Method))
         {
             await next(context).ConfigureAwait(false);
             return;
         }
+
+        // ---- ② Origin 校验：所有非安全方法都做，包括登录（防登录 CSRF） ----
+        EnsureSameOrigin(context);
 
         // ---- ② 登录端点还没有会话，不要求 CSRF 头（Origin 已在上面校验） ----
         if (context.Request.Path.Equals(LoginPath, StringComparison.OrdinalIgnoreCase))
@@ -110,9 +116,15 @@ public sealed class AdminCsrfMiddleware(RequestDelegate next, ILogger<AdminCsrfM
     }
 
     /// <summary>
-    /// <c>Origin</c> 必须是本站。缺失同样拒绝——浏览器同源请求一定会带 <c>Origin</c>，
-    /// 不带的基本只有非浏览器客户端，而它们本来就不需要 CSRF 保护，让它们显式带上反而更好排查。
+    /// <c>Origin</c> 必须是本站。缺失同样拒绝。
     /// </summary>
+    /// <remarks>
+    /// <b>只在非安全方法上调用</b>：浏览器对同源 GET/HEAD <b>不</b>发 <c>Origin</c>，
+    /// 对同源 POST/PUT/PATCH/DELETE <b>会</b>发。也就是说"非安全方法上没有 Origin"本身就说明
+    /// 它不是浏览器发的，或者是被 <c>no-cors</c>/表单跨站伪造的——两种都该拒。
+    /// 因此命令行客户端必须显式带 <c>-H 'Origin: ...'</c>，这是刻意的摩擦：
+    /// 让"绕过浏览器"这件事在脚本里显式可见。
+    /// </remarks>
     private static void EnsureSameOrigin(HttpContext context)
     {
         var origin = context.Request.Headers.Origin.FirstOrDefault();
