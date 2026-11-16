@@ -1,0 +1,160 @@
+# =============================================================================
+# OpenStore 门禁 CI（唯一入口：`scripts/check.sh`，本文件不内联任何断言）
+#
+# 为什么需要这个文件：
+#   仓库有一道 22 步的门禁（步数以 `bash scripts/check.sh --list` 为唯一出处，本文件
+#   不复述数字），但它此前的唯一守望者是"有人记得跑 --full"。**门禁存在，却没有人
+#   在每个 PR 上执行它** —— 那么它挡住的只是"自觉得很自觉的那几个人"。其中 5 步按里程碑
+#   未实现（integration_tests / contract_drift / sql_count / seo_matrix / e2e_smoke），
+#   它们的"跳过"是最危险的那种绿：看起来覆盖率完整。
+#
+# 本文件只做三件事：
+#   1. 给两种触发各配一档：PR → `--fast`（提交前那 90 秒）；push main → 默认档（全部步骤）。
+#   2. 把环境准备好，让门禁能在干净机器上真的跑起来（见下面 setup 各步的注释：
+#      tools 预构建、dotnet-ef 版本、NuGet 缓存为什么不用 setup-dotnet 的 cache、锁目录）。
+#   3. 把 VERDICT / step_count / soak 来源三行搬进作业摘要（由 `scripts/ci-gate.sh` 实现）。
+#      原因：默认档在 M4 之前恒为 `VERDICT: PARTIAL(p/n)` 而**退出码仍是 0**（docs/05 §4.6），
+#      只看退出码的话，一次 PARTIAL 会以绿色对勾滚过去。**只在失败时才显示的信号等于没有信号。**
+#
+# 判据只有一条：**本文件里任何门禁步骤的退出码 != 0 即失败**（GitHub 的默认行为）。
+# 退出码词汇表在 docs/05 §4.6：0 通过 / 1 断言失败 / 2 未验证 / 3 用法错误。
+# **2 与 3 都是非零，所以"没验成"永远不会被当成通过。**
+# 永久禁止在此文件加 `continue-on-error: true`、`|| true`、`[ $rc -le 2 ]` 一类写法 ——
+# 那不是"让 CI 稳一点"，那是把 `2`（未验证）静默升格成 `0`（通过），
+# 而恒红的门禁与恒绿的假门禁会以同样的速度被关掉。
+#
+# 不引入任何 secret、不连数据库、不起前端：剩下 5 个 skip 里有 4 个正是因为
+# "需要 DB / 前端 / 真站"。CI 阶段就让它们按设计跳过，并且**把跳过这件事写进摘要**。
+# =============================================================================
+name: gates
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# 同一分支的新推送顶掉旧运行：门禁跑的是"当前 HEAD 是什么样"，旧的那次已经没有读者了。
+concurrency:
+  group: gates-${{ github.ref }}
+  cancel-in-progress: true
+
+# 门禁只读代码。不需要写权限，也不需要任何 secret（GITHUB_TOKEN 只用于 checkout）。
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+  # 门禁自己的输出语言固定，避免 runner 的 locale 让 grep 锚点对不上
+  LC_ALL: C.UTF-8
+
+jobs:
+  # 只有**一个** job，故意不拆成 fast/full 两个 job：
+  # 分支保护的"必需检查"认的是 check 名。两个 job 会让 PR 上永远只出现其中一个名字，
+  # 另一个变成"expected but never reported"→ 永远等不到 → 要么卡住合并，要么被改成非必需。
+  # 一个 job + 两个互斥 step（按 event 二选一）则 check 名恒为 `gates`。
+  gates:
+    name: gates
+    runs-on: ubuntu-24.04
+    # 超时不是"慢一点也没关系"：挂住的 job 会一直占 runner 且永远绿着转圈。
+    # 默认档实测 2.5 分钟（冷缓存 restore + build 另计），30 分钟足够兜住异常。
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 门禁步骤 soak_self_test 用 `git show HEAD:scripts/soak.sh` 取 HEAD 版脚本
+          # （验的是"提交后的状态"，不是工作区）。浅克隆 depth=1 仍带完整的 HEAD tree，
+          # 够用；不需要 fetch-depth: 0（那是 verify-gates.sh 的 worktree 注入才需要）。
+          fetch-depth: 1
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          # 8.0.x：与 global.json 的 `sdk.version = 8.0.418` + `rollForward: latestFeature` 对齐，
+          # 由 setup 装同 feature band（4xx）的最新补丁。
+          dotnet-version: 8.0.x
+          # 注意：这里**不能**写 `cache: true`。setup-dotnet 的缓存只认
+          # packages.lock.json / packages.config，而本仓库一个都没有（中央包管理靠
+          # Directory.Packages.props），写上去会直接让 workflow 在 setup 阶段报
+          # "no lock files found" 而失败。缓存改用下面的 actions/cache，键含
+          # Directory.Packages.props 的哈希。
+
+      - name: SDK 说明（版本漂了要在这里看得见）
+        run: |
+          dotnet --version
+          dotnet --list-sdks
+
+      - name: NuGet 缓存
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          # global.json 进键：改 SDK/回滚版本时缓存必须失效，否则会出现
+          # "本机好好的、CI 上 restore 到旧资产"这类最难查的差异。
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', '**/*.csproj', 'global.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: restore（门禁第 1 步就要 build，先把包取下来）
+        run: |
+          dotnet restore OpenStore.sln
+          # tools 工程不在 sln 里（见 tools/OpenStore.Tools/OpenStore.Tools.csproj 头部注释），
+          # 单独 restore/build 一次。
+          dotnet restore tools/OpenStore.Tools/OpenStore.Tools.csproj
+
+      - name: 预构建 tools/OpenStore.Tools
+        # **这一步是实测出来的，不是保险起见加上去的。**
+        # 在干净 checkout 里直接跑 `check.sh`，第 9 步 templates / 第 10 步 themes 会红：
+        # 它们用 `dotnet run --project tools/OpenStore.Tools --no-build`，而 tools 工程
+        # 不在 OpenStore.sln 里 → 门禁第 1 步的 build 不覆盖它 → 没有可执行的产物 →
+        # `An error occurred trying to start process '.../OpenStore.Tools' ... No such file or directory`。
+        # 本地之所以常年是绿的，是因为以前有人手工 build 过它（旧产物躺在 bin/ 里）——
+        # 这正是"必须在干净机器上跑一遍"才能发现的那类差异。
+        run: dotnet build tools/OpenStore.Tools/OpenStore.Tools.csproj -warnaserror --nologo -v q
+
+      - name: 安装 dotnet-ef（门禁第 8 步 migrations 的唯一前置）
+        # 版本**钉死**在 Directory.Packages.props 里 Microsoft.EntityFrameworkCore.Design
+        # 的版本（8.0.11）：dotnet-ef 与 EF Core 的 major.minor 必须一致，否则工具会拒绝
+        # 或告警，而"告警但继续"正是本仓库反复拒绝的形态。升级包时这里要一起改。
+        # 没有 .config/dotnet-tools.json（本仓库不用 tool manifest），所以是全局安装而非 `dotnet tool restore`。
+        run: |
+          dotnet tool install --global dotnet-ef --version 8.0.11
+          # $GITHUB_PATH 只对**后续** step 生效，本 step 内要自己先挂上：
+          # dotnet CLI **不会**自动去 ~/.dotnet/tools 找全局工具（实测：
+          # 干净 PATH 下 `dotnet ef --version` 报"在 PATH 上找不到 dotnet-ef"）。
+          # 少这一行，这个 setup step 会在每一次运行里红，而门禁本体一次都跑不到。
+          export PATH="$HOME/.dotnet/tools:$PATH"
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+          dotnet ef --version
+
+      # -----------------------------------------------------------------------
+      # 门禁本体：两档互斥。档位映射写在触发条件旁边，读的人不用跳文件就知道
+      # "PR 跑的是哪一档、main 跑的是哪一档"。
+      # -----------------------------------------------------------------------
+      - name: 门禁 · PR 档（--fast：前 6 步 + fixture）
+        if: github.event_name == 'pull_request'
+        env:
+          # 锁目录必须是**已存在**的目录。check.sh 用 `mkdir "$LOCKDIR"` 抢锁，
+          # 指到不存在的父目录时它会 ENOENT，然后打印成 `GATE FAILED: check_lock (race)`
+          # —— 一条指向"并发"的错误信息，实际原因是"目录没建"（实测踩过）。
+          # runner.temp 由 Actions 每 job 创建且互不共享，正好同时解决
+          # self-hosted runner 多 job 共享 /tmp 时的假失败。
+          CHECK_LOCK_DIR: ${{ runner.temp }}
+        run: bash scripts/ci-gate.sh fast
+
+      - name: 门禁 · main 档（默认：--list 声明的全部步骤）
+        if: github.event_name == 'push'
+        env:
+          CHECK_LOCK_DIR: ${{ runner.temp }}
+        run: bash scripts/ci-gate.sh default
+
+      - name: 归档门禁日志
+        # always()：红的时候日志最有用。日志里含每个失败步骤的 40 行尾巴与 GATE FAILED 锚点。
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gates-log
+          path: artifacts/ci-gate-*.log
+          if-no-files-found: ignore
+          retention-days: 14
