@@ -1,16 +1,15 @@
 <script lang="ts">
   import { goto } from '$app/navigation'
-  import { base } from '$lib/paths'
-  import { Button, Field, FormActions, Input, Select, Textarea, toast } from '@openstore/ui'
+  import { base } from '#lib/paths'
+  import { Button, Field, FormActions, Input, Select, toast } from '@openstore/ui'
   import type { SelectOption } from '@openstore/ui'
-  import { apiFetch, isStatus } from '$lib/api'
-  import { t } from '$lib/i18n'
+  import { apiFetch, isStatus } from '#lib/api'
+  import { t } from '#lib/i18n'
   import { majorToMinor } from '@openstore/sdk'
   import type { CreateProductRequest } from '@openstore/sdk'
 
   let slug = $state('')
   let title = $state('')
-  let description = $state('')
   let sku = $state('')
   let priceMajor = $state('')
   let currency = $state('CNY')
@@ -28,19 +27,14 @@
     if (loading) return
     loading = true
     try {
-      // 契约：POST /api/admin/products（docs/03 §5.4）。字段名 slug/title 与 M0 领域实体对齐，
-      // docs/03 用 skuRoot/names/descriptionHtml/categoryIds/attributes【待确认】。
+      // 契约：POST /api/admin/products（后端权威）。variant.price 必填。
       const body: CreateProductRequest = {
         slug: slug.trim(),
         title: title.trim(),
-        descriptionHtml: description.trim() || undefined,
         variants: [
           {
             sku: sku.trim(),
-            price:
-              priceMajor.trim() !== ''
-                ? { amountMinor: majorToMinor(Number(priceMajor), currency), currency }
-                : undefined,
+            price: { amountMinor: majorToMinor(Number(priceMajor), currency), currency },
           },
         ],
       }
@@ -69,9 +63,6 @@
     <Field label={t('admin.products.titleLabel')} for="title" required>
       <Input name="title" bind:value={title} required />
     </Field>
-    <Field label={t('admin.products.description')} for="description">
-      <Textarea name="description" bind:value={description} rows={5} />
-    </Field>
 
     <div class="variant">
       <div class="variant__head">{t('admin.products.variants')}</div>
@@ -79,8 +70,8 @@
         <Field label={t('admin.products.sku')} for="sku" required>
           <Input name="sku" bind:value={sku} required />
         </Field>
-        <Field label={t('admin.products.price')} for="price">
-          <Input name="price" type="number" min="0" step="0.01" bind:value={priceMajor} />
+        <Field label={t('admin.products.price')} for="price" required>
+          <Input name="price" type="number" min="0" step="0.01" bind:value={priceMajor} required />
         </Field>
         <Field label="Currency" for="currency">
           <Select name="currency" options={currencyOptions} bind:value={currency} />

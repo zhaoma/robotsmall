@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { base } from '$lib/paths'
+  import { base } from '#lib/paths'
   import { page } from '$app/state'
-  import { Button, EmptyState, Field, FormActions, Input, Skeleton, Tabs, Textarea, toast } from '@openstore/ui'
+  import { Button, EmptyState, Field, FormActions, Input, Skeleton, Tabs, toast } from '@openstore/ui'
   import type { TabItem } from '@openstore/ui'
-  import { apiFetch, isStatus } from '$lib/api'
-  import { createMutation, createQuery } from '$lib/query.svelte'
-  import { t } from '$lib/i18n'
-  import StatusBadge from '$lib/components/StatusBadge.svelte'
+  import { apiFetch, isStatus } from '#lib/api'
+  import { createMutation, createQuery } from '#lib/query.svelte'
+  import { t } from '#lib/i18n'
+  import StatusBadge from '#lib/components/StatusBadge.svelte'
   import { formatMoney } from '@openstore/sdk'
   import type { AdminProductDto } from '@openstore/sdk'
 
@@ -16,25 +16,21 @@
     (signal) => apiFetch(`/api/admin/products/${id}`, { signal })
   )
 
-  // 基本信息 draft（与实体解耦，取消即丢弃）
-  let slug = $state('')
+  // 基本信息 draft（后端契约 M0 仅 title 可编辑；slug 由后端生成，不可改）
   let title = $state('')
-  let description = $state('')
 
   // product.data 到位后回填 draft（只回填一次，避免覆盖用户正在编辑的内容）
   $effect(() => {
     const d = product.data
-    if (d && slug === '' && title === '') {
-      slug = d.slug
+    if (d && title === '') {
       title = d.title
-      description = d.descriptionHtml ?? ''
     }
   })
 
-  const save = createMutation<{ slug: string; title: string; descriptionHtml?: string }, AdminProductDto>(
+  const save = createMutation<{ title: string }, AdminProductDto>(
     (input) =>
       apiFetch(`/api/admin/products/${id}`, {
-        method: 'PUT', // docs/03 §5.4 为 PUT；团队简报写 PATCH【待确认】
+        method: 'PATCH', // 后端契约：PATCH /api/admin/products/{id}，体 { title?, variants? }
         body: input,
       })
   )
@@ -52,12 +48,10 @@
 
   async function onSave() {
     try {
-      const saved = await save.mutate({ slug, title, descriptionHtml: description || undefined })
+      const saved = await save.mutate({ title })
       toast('success', t('common.action.save'))
       if (saved) {
-        slug = saved.slug
         title = saved.title
-        description = saved.descriptionHtml ?? ''
       }
     } catch (err) {
       if (isStatus(err, 403)) toast('error', t('error.forbidden'))
@@ -92,14 +86,8 @@
 
     {#if activeTab === 'basic'}
       <form class="form" onsubmit={(e) => { e.preventDefault(); onSave() }}>
-        <Field label={t('admin.products.slug')} for="slug" required hint="^[a-z0-9]+(-[a-z0-9]+)*">
-          <Input name="slug" bind:value={slug} required />
-        </Field>
         <Field label={t('admin.products.titleLabel')} for="title" required>
           <Input name="title" bind:value={title} required />
-        </Field>
-        <Field label={t('admin.products.description')} for="description">
-          <Textarea name="description" bind:value={description} rows={6} />
         </Field>
         <FormActions>
           <Button variant="secondary" href={`${base}/products`}>{t('common.action.cancel')}</Button>
@@ -107,44 +95,48 @@
         </FormActions>
       </form>
     {:else if activeTab === 'variants'}
-      <div class="variants">
-        {#if product.data.variants.length === 0}
-          <EmptyState title={t('admin.products.noVariants')} />
-        {:else}
+      {#if product.data}
+        <div class="variants">
+          {#if product.data.variants.length === 0}
+            <EmptyState title={t('admin.products.noVariants')} />
+          {:else}
+            <table class="vtable">
+              <thead>
+                <tr><th>{t('admin.products.sku')}</th><th>AxisSignature</th></tr>
+              </thead>
+              <tbody>
+                {#each product.data.variants as v (v.id)}
+                  <tr><td>{v.sku}</td><td class="mono">{v.axisSignature}</td></tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+        </div>
+      {/if}
+    {:else if activeTab === 'price'}
+      {#if product.data}
+        <div class="variants">
           <table class="vtable">
             <thead>
-              <tr><th>{t('admin.products.sku')}</th><th>AxisSignature</th></tr>
+              <tr><th>{t('admin.products.sku')}</th><th>{t('admin.products.price')}</th></tr>
             </thead>
             <tbody>
               {#each product.data.variants as v (v.id)}
-                <tr><td>{v.sku}</td><td class="mono">{v.axisSignature}</td></tr>
+                <tr>
+                  <td>{v.sku}</td>
+                  <td>
+                    {#if v.price}
+                      {formatMoney(v.price.amountMinor, v.price.currency)}
+                    {:else}
+                      —
+                    {/if}
+                  </td>
+                </tr>
               {/each}
             </tbody>
           </table>
-        {/if}
-      </div>
-    {:else if activeTab === 'price'}
-      <div class="variants">
-        <table class="vtable">
-          <thead>
-            <tr><th>{t('admin.products.sku')}</th><th>{t('admin.products.price')}</th></tr>
-          </thead>
-          <tbody>
-            {#each product.data.variants as v (v.id)}
-              <tr>
-                <td>{v.sku}</td>
-                <td>
-                  {#if v.prices.length > 0}
-                    {formatMoney(v.prices[0].amountMinor, v.prices[0].currency)}
-                  {:else}
-                    —
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
+        </div>
+      {/if}
     {:else}
       <EmptyState title={t('common.placeholder.notImplemented')} description={t('common.placeholder.comingSoon')} />
     {/if}

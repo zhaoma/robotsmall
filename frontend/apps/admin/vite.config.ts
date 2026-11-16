@@ -12,10 +12,7 @@ export default defineConfig({
         assets: 'build',
         fallback: 'index.html',
       }),
-      // SvelteKit 3 移除了内置 $lib 别名；按官方迁移提示显式保留 $lib（设计文档沿用 $lib）。
-      alias: {
-        '$lib': 'src/lib',
-      },
+      // $lib 已迁到 package.json 的 #lib subpath imports（SvelteKit 3 推荐方式）。
       paths: {
         base: '/admin',
       },
@@ -24,6 +21,16 @@ export default defineConfig({
       },
     }),
   ],
+  // 开发期把 /api 转给后端：没有这条，dev server 会把 /api/** 当成自己的路由并回 404，
+  // 本地登录与所有列表都拿不到数据（只能靠 mock）。生产同源部署不需要它。
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5080',
+        changeOrigin: false,
+      },
+    },
+  },
   // 前端设计 §1.3：两个必须项，否则 .svelte 会被 esbuild 预打包而报错。
   optimizeDeps: {
     exclude: ['@openstore/ui', '@openstore/i18n', '@openstore/sdk'],

@@ -209,11 +209,23 @@ importers:
         specifier: ^8.3.8
         version: 8.3.8
 
-  packages/i18n: {}
+  packages/i18n:
+    devDependencies:
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
 
-  packages/sdk: {}
+  packages/sdk:
+    devDependencies:
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
 
-  packages/ui: {}
+  packages/ui:
+    devDependencies:
+      svelte:
+        specifier: ^5.57.3
+        version: 5.57.3
 
 packages:
 

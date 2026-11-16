@@ -31,7 +31,7 @@ export function createTableState(opts: { pageSize?: number } = {}) {
   }
 
   function update(partial: Record<string, string | undefined>) {
-    const next = new URLSearchParams(params)
+    const next = new URLSearchParams(params.toString())
     for (const [k, v] of Object.entries(partial)) {
       if (v) next.set(k, v)
       else next.delete(k)
@@ -41,7 +41,7 @@ export function createTableState(opts: { pageSize?: number } = {}) {
 
     const qs = next.toString()
     const path = page.url.pathname
-    goto(qs ? `${path}?${qs}` : path, { replaceState: true, keepFocus: true, noScroll: true })
+    goto(qs ? `${path}?${qs}` : path, { replace: true, reset: false })
   }
 
   return {

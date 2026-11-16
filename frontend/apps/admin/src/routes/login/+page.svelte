@@ -1,9 +1,9 @@
 <script lang="ts">
   import { goto } from '$app/navigation'
-  import { base } from '$lib/paths'
+  import { base } from '#lib/paths'
   import { Button, Field, Input } from '@openstore/ui'
-  import { apiFetch, isStatus } from '$lib/api'
-  import { t } from '$lib/i18n'
+  import { apiFetch, isStatus } from '#lib/api'
+  import { t } from '#lib/i18n'
 
   let email = $state('')
   let password = $state('')

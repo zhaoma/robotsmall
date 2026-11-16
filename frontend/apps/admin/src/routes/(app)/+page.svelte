@@ -1,8 +1,8 @@
 <script lang="ts">
   import { Badge, Skeleton } from '@openstore/ui'
-  import { apiFetch } from '$lib/api'
-  import { createQuery } from '$lib/query.svelte'
-  import { t } from '$lib/i18n'
+  import { apiFetch } from '#lib/api'
+  import { createQuery } from '#lib/query.svelte'
+  import { t } from '#lib/i18n'
   import type { DashboardSummaryDto } from '@openstore/sdk'
 
   // 本期后端可能未实现 dashboard/summary 聚合端点：失败即回退占位 0 + "待后端"标记，不造假数据。

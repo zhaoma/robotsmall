@@ -1,5 +1,5 @@
 import { goto } from '$app/navigation'
-import { base } from '$lib/paths'
+import { base } from '#lib/paths'
 import { ApiError, parseProblem } from '@openstore/sdk'
 import type { Problem } from '@openstore/sdk'
 

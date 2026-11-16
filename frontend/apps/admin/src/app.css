@@ -11,12 +11,17 @@ body {
   padding: 0;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   font-family: var(--font-sans);
   font-size: 0.875rem;
   line-height: 1.5;
   color: var(--color-fg);
-  background: var(--color-surface);
+  background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -42,6 +47,8 @@ p {
 
 :focus-visible {
   outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
 }
 
 /* 通用骨架屏等辅助 */

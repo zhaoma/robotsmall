@@ -1,6 +1,6 @@
 <script lang="ts">
   import { EmptyState } from '@openstore/ui'
-  import { t } from '$lib/i18n'
+  import { t } from '#lib/i18n'
 
   let { title }: { title: string } = $props()
 </script>

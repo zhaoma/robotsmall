@@ -1,7 +1,7 @@
 import { goto } from '$app/navigation'
-import { base } from '$lib/paths'
-import { apiFetch } from '$lib/api'
-import type { AdminUserDto } from '@openstore/sdk'
+import { base } from '#lib/paths'
+import { apiFetch } from '#lib/api'
+import type { AdminAuthResponse } from '@openstore/sdk'
 
 /**
  * 已登录壳的客户端守卫（前端设计 §1.1 树）：
@@ -10,7 +10,7 @@ import type { AdminUserDto } from '@openstore/sdk'
  */
 export const load = async () => {
   try {
-    const me = await apiFetch<AdminUserDto>('/api/admin/auth/me')
+    const me = await apiFetch<AdminAuthResponse>('/api/admin/auth/me')
     return { me }
   } catch {
     const next = encodeURIComponent(window.location.pathname + window.location.search)

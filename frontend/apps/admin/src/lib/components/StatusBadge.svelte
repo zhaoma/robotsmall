@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Badge } from '@openstore/ui'
   import type { ProductStatus } from '@openstore/sdk'
-  import { t } from '$lib/i18n'
+  import { t } from '#lib/i18n'
 
   let { status }: { status: ProductStatus } = $props()
 
