@@ -1,5 +1,7 @@
+using OpenStore.Application.Abstractions;
 using OpenStore.Application.Catalog.Dtos.Admin;
 using OpenStore.Domain.Catalog;
+using OpenStore.Domain.Inventory;
 using OpenStore.Domain.Shared;
 
 namespace OpenStore.Application.Catalog.Commands;
@@ -11,7 +13,10 @@ namespace OpenStore.Application.Catalog.Commands;
 /// <b>事务边界</b>：M0 的仓储方法（<c>AddAsync</c>/<c>SaveAsync</c>）内部各带一次 <c>SaveChanges</c>，
 /// 等效于单聚合单事务（后端设计 §1.5）。M1 引入 <c>IUnitOfWork</c> 后，这里改成"取聚合 → 改 → 由用例统一 Commit"。
 /// </remarks>
-public sealed class ProductAdminService(IProductAdminRepository products)
+public sealed class ProductAdminService(
+    IProductAdminRepository products,
+    IStockRepository stock,
+    IClock clock)
 {
     /// <summary>取后台商品详情（含变体）。不存在返回 <c>null</c>（端点映射 404）。</summary>
     public async Task<AdminProductDetailDto?> GetDetailAsync(Guid id, CancellationToken ct)
@@ -44,6 +49,19 @@ public sealed class ProductAdminService(IProductAdminRepository products)
         }
 
         await products.AddAsync(product, ct).ConfigureAwait(false);
+
+        // 每个变体必须有一行库存（数据模型 §3.2：「一变体一行，随变体创建」）。
+        // 缺这一行不会报任何错，但该变体在前台永远 available = 0、库存调整接口 404
+        // ——商品"建出来了但卖不出去"，是最难自查的一类缺口。
+        // 期初量为 0：建品不等于入库，真实到货走 POST /api/admin/inventory/{id}/adjust。
+        var now = clock.UtcNow;
+        foreach (var variant in product.Variants)
+        {
+            await stock
+                .SaveAsync(StockItem.Create(variant.Id, initialOnHand: 0, StockOperator.System, now), ct)
+                .ConfigureAwait(false);
+        }
+
         return ToDetail(product);
     }
 
