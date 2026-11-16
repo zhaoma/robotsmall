@@ -101,7 +101,7 @@ selftest() {
   local b_out b_rc
   b_out=$(bash "$0" --dir "$base" --quiet 2>&1); b_rc=$?
   if [ "$b_rc" != "0" ]; then
-    echo "  NOTGREEN 基线本身就不是全绿（rc=$b_rc）—— 自证无意义，先修基线" >&2
+    echo "  NOTGREEN 基线本身就不是全绿（rc=${b_rc}）—— 自证无意义，先修基线" >&2
     printf '%s\n' "$b_out" | head -12 | sed 's/^/           | /' >&2
     return 1
   fi
