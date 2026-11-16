@@ -12,6 +12,21 @@
 # 判据只做一件事：`HasCheckConstraint("CK_X")` 声明出的每个名字，
 # 必须出现在某个**非 Designer、非 Snapshot** 的迁移文件里。
 #
+# ---- C3：名字对得上，不等于语义对得上 -------------------------------------
+# C1 只比名字。本仓真实发生过一次"名字两边都有、表达式不同"：
+#   配置 `CategoryConfiguration.cs`  → `"Depth" >= 1 AND "Depth" <= 5`
+#   迁移 `M1_Catalog.cs`（Up）       → `"Depth" >= 0 AND "Depth" <= 5`
+# 当时 C1 绿、第 8 步 `has-pending-model-changes` 也绿，只有人拿 `docs/02` 正文
+# 对一遍才看得出。所以 C3 比**表达式字面量**。
+#
+# C3 有两个必须写下来的坑，都是"看起来能跑、其实判错"的那种：
+#   ① **只看 `Up()`，不看 `Down()`**。`Down()` 里写的是"回到旧定义"，与配置天然不同
+#      （`M1_CategoryDepthLowerBound.Down` 就写着 `>= 0`）。不分 Up/Down 去取"最后一次
+#      出现"，会把每条**被后续迁移修过**的约束都判成不一致 —— 假红，而假红的下场是
+#      有人去改期望值。
+#   ② **按文件名顺序回放，`Drop` 清空、`Add`/`CheckConstraint` 覆盖**。同一名字会在
+#      多个迁移里出现（建表一次、后来重建表再改一次），只有最后一个 `Up()` 的结果有效。
+#
 # 为什么排除 Designer：Designer 里也有一份完整模型（内嵌的 TargetModel），
 # 它会把 CK 名写进去。不排除的话，这条判据会被 Designer 满足 —— 而 Designer
 # 是 `add` 自动生成的，等于又绕回自证。
@@ -44,6 +59,8 @@ print_list() {
   [C1] 配置里 HasCheckConstraint 声明的每个名字，必须出现在某个迁移文件里
        失败 rc=1；配置目录不存在或无任何声明 rc=2（前置缺失 ≠ 通过）
   [C2] 明细：配置声明 N 个 / 迁移创建 M 个（M 可多于 N，见文件头说明）
+  [C3] 名字对得上之后，**表达式**也必须逐字一致（只看 Up()，按文件名顺序回放到最终态）
+       失败 rc=1；无法比对（迁移侧没有可解析的 Up() 表达式）rc=2
 EOF
 }
 
@@ -88,6 +105,128 @@ collect_mig() {
   done | LC_ALL=C sort -u
 }
 
+# C3：配置里的表达式与迁移里**最终生效**的表达式必须逐字一致。
+# 退出码 0=一致 / 1=不一致 / 2=无法比对（前置缺失 ≠ 通过）。
+#
+# 为什么用 python 而不是继续 bash：要同时做三件 bash 做不可靠的事 ——
+# ① 按引号配对切参数（表达式里含逗号，`IN (0, 1)`，裸 `[^,]*` 会切错）；
+# ② 括号配对找 `Up()` 体的边界；③ 反转义 `\"`。用 grep/sed 拼出来会在
+# 下一种合法写法上静默返回空 —— 那正是 C1 刚栽过的那个坑。
+check_exprs() {
+  local conf_dir="$1" mig_dir="$2"
+  command -v python3 >/dev/null 2>&1 || {
+    printf 'PRECONDITION: C3 需要 python3（按引号切参数、找 Up() 体边界）\n'
+    return 2
+  }
+  python3 - "$conf_dir" "$mig_dir" <<'PY'
+import os, re, sys, glob
+
+conf_dir, mig_dir = sys.argv[1], sys.argv[2]
+STR = r'"((?:[^"\\]|\\.)*)"'
+IDENT = r'([A-Za-z_][A-Za-z0-9_]*)'
+
+def strip_comments(s):
+    return "\n".join(re.sub(r'(?<!:)//.*$', '', ln) for ln in s.splitlines())
+
+def unesc(lit):
+    return lit.replace('\\"', '"').replace("\\'", "'")
+
+def norm(e):
+    return re.sub(r'\s+', ' ', e).strip()
+
+# ---- 配置侧：name -> 表达式。名字可能是字面量，也可能是一个 const string。
+conf = {}
+for f in sorted(glob.glob(os.path.join(conf_dir, '**', '*.cs'), recursive=True)):
+    src = strip_comments(open(f, encoding='utf-8').read())
+    consts = dict(re.findall(r'const\s+string\s+' + IDENT + r'\s*=\s*' + STR + r'\s*;', src))
+    for m in re.finditer(r'HasCheckConstraint\(\s*' + STR + r'\s*,\s*' + STR + r'\s*[,)]', src, re.S):
+        conf[unesc(m.group(1))] = norm(unesc(m.group(2)))
+    for m in re.finditer(r'HasCheckConstraint\(\s*' + IDENT + r'\s*,\s*' + STR + r'\s*[,)]', src, re.S):
+        nm = consts.get(m.group(1))
+        if nm:
+            conf[nm] = norm(unesc(m.group(2)))
+
+# ---- 迁移侧：只回放 Up() 体，按文件名顺序（时间戳前缀 = 迁移顺序）
+def up_body(src):
+    m = re.search(r'protected\s+override\s+void\s+Up\s*\(', src)
+    if not m:
+        return None
+    i = src.find('{', m.end())
+    if i < 0:
+        return None
+    d = 0
+    for k in range(i, len(src)):
+        if src[k] == '{':
+            d += 1
+        elif src[k] == '}':
+            d -= 1
+            if d == 0:
+                return src[i:k + 1]
+    return src[i:]
+
+ops = []   # (name, expr 或 None=删除)
+for f in sorted(glob.glob(os.path.join(mig_dir, '*.cs'))):
+    b = os.path.basename(f)
+    # 排除 Designer 与 Snapshot 的理由见文件头：它们内嵌完整 TargetModel，
+    # 不排就等于让 `add` 的产物自己满足判据。
+    if b.endswith('Designer.cs') or b == 'StoreDbContextModelSnapshot.cs':
+        continue
+    src = strip_comments(open(f, encoding='utf-8').read())
+    body = up_body(src)
+    if body is None:
+        continue
+    for m in re.finditer(r'\b(DropCheckConstraint|AddCheckConstraint|CheckConstraint)\s*\((.*?)\)\s*;', body, re.S):
+        fn, args = m.group(1), m.group(2)
+        lits = re.findall(STR, args, re.S)
+        if fn == 'DropCheckConstraint':
+            nm = re.search(r'name:\s*' + STR, args, re.S)
+            name = unesc(nm.group(1)) if nm else (unesc(lits[0]) if lits else None)
+            if name:
+                ops.append((name, None))
+            continue
+        nm = re.search(r'name:\s*' + STR, args, re.S)
+        sq = re.search(r'sql:\s*' + STR, args, re.S)
+        if nm and sq:
+            ops.append((unesc(nm.group(1)), norm(unesc(sq.group(1)))))
+        elif len(lits) >= 2:
+            ops.append((unesc(lits[0]), norm(unesc(lits[1]))))
+
+final = {}
+for name, expr in ops:
+    if expr is None:
+        final.pop(name, None)
+    else:
+        final[name] = expr
+
+bad, cmpd = [], 0
+for name in sorted(conf):
+    if name not in final:
+        continue          # 名字缺失是 C1 的判据，这里不重复报
+    cmpd += 1
+    if final[name] != norm(conf[name]):
+        bad.append((name, norm(conf[name]), final[name]))
+
+if conf and cmpd == 0:
+    print('PRECONDITION: C3 无法比对 —— 迁移侧没有任何可解析的 Up() 表达式')
+    sys.exit(2)
+
+if bad:
+    print('FAIL: 以下 CHECK 的名字对得上，表达式与配置不一致：')
+    for n, c, m in bad:
+        print('  - %s' % n)
+        print('      配置（HasCheckConstraint）：%s' % c)
+        print('      迁移（Up() 回放后的最终态）：%s' % m)
+    print('      后果：名字对、C1 绿、第 8 步也绿，而库里那条约束的语义是旧的。')
+    print('      修法：重新生成迁移，别手工改 Up() 里的 SQL —— 改完配置再 add 才会连快照一起对。')
+    print('DETAIL: C3 比对 %d 个 / 不一致 %d 个' % (cmpd, len(bad)))
+    sys.exit(1)
+
+print('结论：C3 表达式 %d 条与配置逐字一致' % cmpd)
+print('DETAIL: C3 比对 %d 个 / 不一致 0 个' % cmpd)
+sys.exit(0)
+PY
+}
+
 # 参数：配置目录 迁移目录。输出：0 通过 / 1 缺 / 2 前置缺失
 check_dirs() {
   local conf_dir="$1" mig_dir="$2"
@@ -130,7 +269,10 @@ check_dirs() {
 
   printf '结论：配置 %s 个 CHECK 全部在迁移里创建\n' "$n_conf"
   printf 'DETAIL: 配置 %s 个 / 迁移 %s 个（迁移多出的部分是历史约束，正常）\n' "$n_conf" "${n_mig:-0}"
-  return 0
+
+  # 名字全对上之后才比表达式：C1 红时表达式没有比较的意义（缺名字比错表达式更靠前）。
+  check_exprs "$conf_dir" "$mig_dir"
+  return $?
 }
 
 self_test() {
@@ -138,10 +280,33 @@ self_test() {
   tmp=$(mktemp -d) || { echo "FAIL: mktemp 失败"; return 1; }
   trap 'rm -rf "$tmp"' RETURN
 
-  # 样本 1：配置有、迁移有 → 必须绿
+  # 迁移样本必须带 `Up()` 体 —— C3 只看 `Up()`（`Down()` 写的是"回到旧定义"，
+  # 与配置天然不同，见文件头坑①）。不带 `Up()` 的样本会让 C3 走 rc=2，
+  # 于是这些样本测的就变成"C3 的前置条件"，而不是它们各自想测的那条。
+  # $1=目标文件 $2=约束名 $3=表达式（写 C# 源码里的样子，含 `\"` 转义）
+  mk_mig() {
+    cat > "$1" <<CS
+using Microsoft.EntityFrameworkCore.Migrations;
+public partial class M : Migration
+{
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.CreateTable(
+            name: "T",
+            columns: table => new { },
+            constraints: table =>
+            {
+                table.CheckConstraint("$2", "$3");
+            });
+    }
+}
+CS
+  }
+
+  # 样本 1：配置有、迁移有、表达式一致 → 必须绿
   mkdir -p "$tmp/s1/conf" "$tmp/s1/mig"
   printf 'b.HasCheckConstraint("CK_A_Bit", "\\"Bit\\" IN (0,1)");\n' > "$tmp/s1/conf/XConfiguration.cs"
-  printf 'table.CheckConstraint("CK_A_Bit", "\\"Bit\\" IN (0,1)");\n' > "$tmp/s1/mig/M1.cs"
+  mk_mig "$tmp/s1/mig/M1.cs" "CK_A_Bit" '\"Bit\" IN (0,1)'
   if CK_CONF_DIR="$tmp/s1/conf" CK_MIG_DIR="$tmp/s1/mig" bash "$0" >/dev/null 2>&1; then
     echo "  [ok] 样本1 配置与迁移一致 → 绿"
   else
@@ -231,12 +396,62 @@ CS
     failures=$((failures+1))
   fi
 
+  # 样本 7：名字对得上、**表达式不同** → 必须红（这是 C3 存在的唯一理由）
+  #
+  # 形状取自本仓真实事故：配置 `>= 1`、`M1_Catalog` 的 Up 里 `>= 0`。
+  # C1 在这一格是绿的（名字两边都有），第 8 步也是绿的 —— 只有 C3 能发现。
+  mkdir -p "$tmp/s7/conf" "$tmp/s7/mig"
+  printf 'b.HasCheckConstraint("CK_D_Depth", "\\"Depth\\" >= 1 AND \\"Depth\\" <= 5");\n' > "$tmp/s7/conf/XConfiguration.cs"
+  mk_mig "$tmp/s7/mig/M1.cs" "CK_D_Depth" '\"Depth\" >= 0 AND \"Depth\" <= 5'
+  set +e
+  local out7
+  out7=$(CK_CONF_DIR="$tmp/s7/conf" CK_MIG_DIR="$tmp/s7/mig" bash "$0" 2>&1)
+  rc=$?
+  set -e
+  if [ "$rc" -eq 1 ] && printf '%s\n' "$out7" | grep -q '表达式与配置不一致'; then
+    echo "  [ok] 样本7 名字对、表达式不同 → rc=1 且红在「表达式与配置不一致」"
+  else
+    echo "  [FAIL] 样本7 期望 rc=1 且红在表达式，实际 rc=$rc"; failures=$((failures+1))
+  fi
+
+  # 样本 8：Up() 一致、**Down() 不同** → 必须绿
+  #
+  # 这一条防的是 C3 最容易写错的那一版：不分 Up/Down 取"最后一次出现"。
+  # 真实文件 `M1_CategoryDepthLowerBound.cs` 的 Down 就是往回写成 `>= 0`，
+  # 取最后一次会把每条被后续迁移修过的约束全判成不一致 —— 假红，
+  # 而假红的下场是有人去改期望值，改完这条判据就废了。
+  mkdir -p "$tmp/s8/conf" "$tmp/s8/mig"
+  printf 'b.HasCheckConstraint("CK_E_Depth", "\\"Depth\\" >= 1");\n' > "$tmp/s8/conf/XConfiguration.cs"
+  cat > "$tmp/s8/mig/M1.cs" <<'CS'
+using Microsoft.EntityFrameworkCore.Migrations;
+public partial class M : Migration
+{
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.AddCheckConstraint(name: "CK_E_Depth", table: "T", sql: "\"Depth\" >= 1");
+    }
+    protected override void Down(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.AddCheckConstraint(name: "CK_E_Depth", table: "T", sql: "\"Depth\" >= 0");
+    }
+}
+CS
+  set +e
+  CK_CONF_DIR="$tmp/s8/conf" CK_MIG_DIR="$tmp/s8/mig" bash "$0" >/dev/null 2>&1
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    echo "  [ok] 样本8 Up() 一致、Down() 不同 → 绿（只回放 Up，不取最后一次出现）"
+  else
+    echo "  [FAIL] 样本8 期望 rc=0（Down 不算最终态），实际 rc=$rc"; failures=$((failures+1))
+  fi
+
   echo
   if [ "$failures" -eq 0 ]; then
-    echo "自证通过：6/6"
+    echo "自证通过：8/8"
     return 0
   fi
-  echo "自证失败：$failures/6 条样本未达预期"
+  echo "自证失败：$failures/8 条样本未达预期"
   return 1
 }
 
