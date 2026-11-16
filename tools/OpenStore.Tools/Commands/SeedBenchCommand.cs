@@ -202,6 +202,11 @@ internal static class SeedBenchCommand
             Console.WriteLine($"已存在，跳过 {report.SkippedProducts} 个商品（按 slug 判重；再跑一次结果相同）");
         }
 
+        // `verdict_code` 与 `verdict` **由同一个分支产出**，所以两者不可能不一致 ——
+        // 这是"只有一处判断"的落地形态，不是两份真相。
+        // 为什么要多一个键：`verdict` 的正文自带 `=`（`行数 = 规格`），任何
+        // `cut -d= -f2` 这类最省事的读法都会把它切成半截中文。修在消费侧只救得了
+        // 一个消费者；这个键是我印出去的，第二个消费者还会踩一次 —— 所以修在源头。
         if (!verification.IsComplete)
         {
             foreach (var problem in verification.Problems)
@@ -209,10 +214,12 @@ internal static class SeedBenchCommand
                 Console.WriteLine($"CHECK FAILED: {problem}");
             }
 
+            Console.WriteLine("verdict_code=FAILED");
             Console.WriteLine("verdict=FAILED 造不满：行数 != 规格，这份数据不能用来出压测报告");
             return;
         }
 
+        Console.WriteLine("verdict_code=OK");
         Console.WriteLine("verdict=OK 造满了（行数 = 规格，每分类 = 规格）");
     }
 

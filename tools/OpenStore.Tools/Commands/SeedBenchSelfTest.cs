@@ -143,6 +143,18 @@ internal static class SeedBenchSelfTest
             }
         }
 
+        // `verdict_code` 的契约是"机器可读"：只有 OK / FAILED 两个词，不含空格、不含 `=`。
+        // 消费侧（soak 的 --seed-meta）会直接拿这个值做字符串比较，多一个空格就是两个不同的
+        // 值，而**没有任何一层会报错**。这条断言有方差：`verdict` 的正文本身带 `=`（`行数 = 规格`），
+        // 把它抄进 `verdict_code` 是下一个人最可能干的事 —— 那正是当初 `cut -d= -f2` 被切成
+        // 半截中文的原因。词汇表故意写死成两个词：真出现第三个状态时，这里和消费侧的 `case`
+        // 必须同时改，那是 review 能看见的动作。
+        var verdictCode = Value(first.Output, "verdict_code");
+        if (verdictCode is not ("OK" or "FAILED"))
+        {
+            problems.Add($"verdict_code 只允许 OK / FAILED（机器可读，不含空格与 '='），实得 '{verdictCode}'");
+        }
+
         // 幂等的可见证据：第二次必须说"已存在，跳过"，而不是静默重插一遍。
         if (!second.Output.Contains("已存在，跳过", StringComparison.Ordinal))
         {
