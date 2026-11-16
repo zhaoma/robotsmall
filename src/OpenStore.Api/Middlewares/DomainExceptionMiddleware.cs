@@ -1,4 +1,3 @@
-using System.Text;
 using OpenStore.Domain.Shared;
 
 namespace OpenStore.Api.Middlewares;
@@ -25,9 +24,6 @@ namespace OpenStore.Api.Middlewares;
 /// </remarks>
 public sealed class DomainExceptionMiddleware(RequestDelegate next, ILogger<DomainExceptionMiddleware> logger)
 {
-    private const string ProblemContentType = "application/problem+json; charset=utf-8";
-    private const string ProblemTypePrefix = "https://openstore.dev/errors/";
-
     /// <summary>
     /// 错误码 → HTTP 状态码。<b>唯一真源</b>：加新错误码时同时在这里登记（后端设计 §8.2 映射表的落地）。
     /// </summary>
@@ -68,17 +64,6 @@ public sealed class DomainExceptionMiddleware(RequestDelegate next, ILogger<Doma
         ["PAGE_SIZE_EXCEEDED"] = StatusCodes.Status400BadRequest,
         ["LOCALE_NOT_ENABLED"] = StatusCodes.Status400BadRequest,
         ["PRODUCT_STATUS_INVALID"] = StatusCodes.Status400BadRequest,
-    };
-
-    private static readonly Dictionary<int, string> TitleByStatus = new()
-    {
-        [StatusCodes.Status400BadRequest] = "提交内容有误",
-        [StatusCodes.Status401Unauthorized] = "请重新登录",
-        [StatusCodes.Status403Forbidden] = "无权访问",
-        [StatusCodes.Status404NotFound] = "未找到",
-        [StatusCodes.Status409Conflict] = "当前状态不允许该操作",
-        [StatusCodes.Status423Locked] = "账号已临时锁定",
-        [StatusCodes.Status429TooManyRequests] = "请求太频繁",
     };
 
     public async Task InvokeAsync(HttpContext context)
@@ -133,23 +118,15 @@ public sealed class DomainExceptionMiddleware(RequestDelegate next, ILogger<Doma
 
             context.Response.Clear();
             context.Response.StatusCode = status;
-            context.Response.ContentType = ProblemContentType;
+            context.Response.ContentType = ProblemResponses.ContentType;
 
             var correlationId = context.TraceIdentifier;
             context.Response.Headers["X-Request-Id"] = correlationId;
 
+            // 与端点产出的错误（登录失败、字段级校验）共用同一个构造器 —— 形状只有一份定义
             await context.Response
                 .WriteAsJsonAsync(
-                    new ProblemResponse(
-                        Type: ProblemTypePrefix + ToKebabCase(ex.Code),
-                        Title: TitleByStatus.TryGetValue(status, out var title) ? title : "请求未被接受",
-                        Status: status,
-                        Detail: ex.Message,
-                        Instance: context.Request.Path.Value,
-                        Code: ex.Code,
-                        CorrelationId: correlationId,
-                        Errors: null,
-                        Details: null),
+                    ProblemResponses.Build(context, status, ex.Code, ex.Message),
                     context.RequestAborted)
                 .ConfigureAwait(false);
         }
@@ -171,38 +148,4 @@ public sealed class DomainExceptionMiddleware(RequestDelegate next, ILogger<Doma
 
         return (StatusCodes.Status400BadRequest, false);
     }
-
-    /// <summary><c>PAGE_OUT_OF_RANGE</c> → <c>page-out-of-range</c>（错误类型 URI 用 kebab-case，便于人读与文档锚点）。</summary>
-    private static string ToKebabCase(string code)
-    {
-        var builder = new StringBuilder(code.Length);
-        foreach (var ch in code)
-        {
-            if (ch == '_')
-            {
-                builder.Append('-');
-            }
-            else
-            {
-                builder.Append(char.ToLowerInvariant(ch));
-            }
-        }
-
-        return builder.ToString();
-    }
-
-    /// <summary>
-    /// 错误响应形状，与契约 <c>#/components/schemas/Problem</c> 一致
-    /// （<c>type/title/status/detail/instance/code/correlationId/errors/details</c>）。
-    /// </summary>
-    private sealed record ProblemResponse(
-        string Type,
-        string Title,
-        int Status,
-        string? Detail,
-        string? Instance,
-        string Code,
-        string CorrelationId,
-        object? Errors,
-        object? Details);
 }

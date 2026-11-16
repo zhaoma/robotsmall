@@ -76,17 +76,48 @@ public static class Permissions
     };
 
     /// <summary>
+    /// Staff（员工）的权限点集合。<b>必须逐条显式列举，绝不能写成 <c>All</c></b>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么不用 <c>AdminRole.Staff =&gt; All</c></b>（那是最初的写法，已判定为缺陷）：<c>All</c> 是
+    /// "本类声明过的所有码"的集合，它会随着每个新批次自动长大。而 §6.4 矩阵里
+    /// <c>catalog.delete</c> / <c>refund.*</c> / <c>customer.read</c> / <c>theme.*</c> / <c>settings.write</c>
+    /// 都是 <b>Admin-only</b>。写成 <c>All</c> 后，下一个批次只要把 <c>catalog.delete</c> 加进 <c>All</c>，
+    /// 员工就<b>静默获得删除商品的能力</b>——没有一行代码被改、没有任何门禁会红，
+    /// 因为死码门禁只检查"每个码有没有被端点用到"，它不知道谁该拥有这个码。
+    /// </para>
+    /// <para>
+    /// <b>默认拒绝</b>：新权限码只进 <see cref="All"/>（为了注册授权策略与门禁），<b>不进这里</b>。
+    /// 想给员工就必须显式加一行，改动会在 diff 里被看见——这正是我们要的摩擦。
+    /// </para>
+    /// <para>
+    /// 本条与 <c>AuthorizationTests</c> 的「Staff 权限必须逐条列举」互为双保险：那条测试在有人把它
+    /// 改回 <c>All</c> 时立刻红，本条注释解释为什么不能改回去。
+    /// </para>
+    /// </remarks>
+    public static readonly IReadOnlyList<string> StaffCodes = new[]
+    {
+        // §6.4：员工可读商品、可改商品（含图片/变体/上下架）、可读分类属性、可读库存、可调库存（US-E8-02）
+        CatalogRead,
+        CatalogWrite,
+        TaxonomyRead,
+        InventoryRead,
+        InventoryAdjust,
+    };
+
+    /// <summary>
     /// 角色 → 权限点集合（代码内静态常量表，<b>不建 <c>RolePermission</c> 表</b>：角色固定两种，架构 YAGNI 清单）。
     /// </summary>
     /// <remarks>
     /// 前端用返回的集合隐藏菜单，但<b>服务端 403 才是唯一权威</b>（US-E8-02「不依赖前端隐藏菜单」）。
-    /// 本轮三个码在 §6.4 矩阵里 Admin 与 Staff 都有，故两者暂时相同；接入 <c>catalog.delete</c> 与
-    /// <c>refund.*</c> 等 Admin-only 码时，Staff 分支必须在这里被裁掉（而不是靠前端藏按钮）。
+    /// 因此这张表错了不会表现为"按钮多了一个"，而是表现为"员工点了就 200"——
+    /// 这也是它必须是显式白名单而不是 <c>All</c> 的原因（见 <see cref="StaffCodes"/>）。
     /// </remarks>
     public static IReadOnlyList<string> ForRole(AdminRole role) => role switch
     {
         AdminRole.Admin => All,
-        AdminRole.Staff => All,
+        AdminRole.Staff => StaffCodes,
         _ => Array.Empty<string>(),
     };
 }

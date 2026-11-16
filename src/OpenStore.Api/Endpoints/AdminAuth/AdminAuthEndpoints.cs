@@ -1,7 +1,5 @@
 using System.Globalization;
 using System.Security.Claims;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.WebUtilities;
 using OpenStore.Api.Auth;
 using OpenStore.Api.Middlewares;
 using OpenStore.Application.Common;
@@ -12,14 +10,29 @@ using OpenStore.Domain.Customers;
 namespace OpenStore.Api.Endpoints.AdminAuth;
 
 /// <summary>
-/// 管理端认证端点（登录 / 登出 / me）。
+/// 管理端认证端点（登录 / 登出 / me / 改密）。
 /// </summary>
 /// <remarks>
-/// <b>为什么这三个端点不挂 <c>RequireAuthorization</c></b>：登录是匿名入口，登出/me 的"主体是谁"
-/// 来自 <c>os_admin_sid</c> Cookie（由 <see cref="SessionAuthenticationHandler"/> 填充），不涉及
-/// 具体权限点——它们校验的是"会话是否有效"，而不是"有没有某个业务操作权限"。因此本目录刻意
-/// 放在 <c>Endpoints/AdminAuth/</c>（不在 <c>Endpoints/Admin/</c> 下），避免 Category=Authorization
-/// 门禁把"该保护的操作没保护"的规则误套到登录入口上。
+/// <para>
+/// <b>为什么登录/登出/me 三个端点标 <c>AllowAnonymous</c> 而不是挂权限点</b>：登录是匿名入口；
+/// 登出与 me 的"主体是谁"来自 <c>os_admin_sid</c> Cookie（由 <see cref="SessionAuthenticationHandler"/> 填充），
+/// 它们校验的是"会话是否有效"，而不是"有没有某个业务操作权限"——挂任何权限点都会让
+/// "被停用但还想登出"的账号卡在 403。
+/// </para>
+/// <para>
+/// <b>为什么改密是裸 <c>RequireAuthorization()</c></b>：它改的是"自己的"密码，主体来自
+/// <c>ICurrentUser</c>、入参里没有 <c>actorId</c>，因此没有任何资源可以被越权选中。
+/// 这是全 Api 唯一允许裸授权的端点，已登记在 <c>AuthorizationTests.裸授权豁免表</c> 里
+/// （新增第二条必须走裁决）。
+/// </para>
+/// <para>
+/// <b>本目录不在 <c>Endpoints/Admin/</c> 下</b>：那里要求"每个端点必须挂具体权限点"，
+/// 登录入口不满足也不该满足该规则。但<b>不等于本目录不受门禁约束</b>——
+/// <c>AuthorizationTests</c> 会扫描整个 <c>Endpoints/</c> 并要求每个端点<b>显式</b>声明
+/// 三者之一（权限点 / <c>AllowAnonymous</c> / 豁免表里的裸授权）。
+/// 曾经的写法只扫 <c>Endpoints/Admin/</c>，结果是"在本目录里新增一个忘记写授权的端点"
+/// 完全不会被任何门禁发现（无 FallbackPolicy 时，没声明的端点默认匿名可访问）。
+/// </para>
 /// </remarks>
 public static class AdminAuthEndpoints
 {
@@ -42,12 +55,12 @@ public static class AdminAuthEndpoints
 
                 // 失败一律走 ProblemDetails：契约只允许一个 Problem schema，
                 // 自造 {code,message} 会让前端写两套错误解析。
-                AdminLoginFailure { Reason: AdminLoginFailureReason.Locked } locked => Problem(
+                AdminLoginFailure { Reason: AdminLoginFailureReason.Locked } locked => ProblemResponses.Json(
                     ctx,
                     StatusCodes.Status423Locked,
                     "AUTH_LOCKED",
                     $"Account locked until {locked.UnlockAt:O}."),
-                _ => Problem(
+                _ => ProblemResponses.Json(
                     ctx,
                     StatusCodes.Status401Unauthorized,
                     "AUTH_INVALID_CREDENTIALS",
@@ -71,7 +84,7 @@ public static class AdminAuthEndpoints
                 await auth.LogoutAsync(SessionToken.Hash(token), ct).ConfigureAwait(false);
             }
 
-            ctx.Response.Cookies.Delete(SessionAuthenticationHandler.SessionCookieName, new CookieOptions { Path = "/api/admin" });
+            ClearAuthCookies(ctx);
             return Results.NoContent();
         })
         .WithName("AdminLogout")
@@ -82,7 +95,7 @@ public static class AdminAuthEndpoints
         {
             if (ctx.User.Identity?.IsAuthenticated != true)
             {
-                return Problem(ctx, StatusCodes.Status401Unauthorized, "AUTH_SESSION_EXPIRED", "Not authenticated.");
+                return ProblemResponses.Json(ctx, StatusCodes.Status401Unauthorized, "AUTH_SESSION_EXPIRED", "Not authenticated.");
             }
 
             var id = Guid.TryParse(ctx.User.FindFirstValue(ClaimTypes.NameIdentifier), out var parsedId)
@@ -121,7 +134,61 @@ public static class AdminAuthEndpoints
         .Produces<AdminAuthResponse>(StatusCodes.Status200OK)
         .ProducesProblem(StatusCodes.Status401Unauthorized);
 
+        group.MapPost("/change-password", async (
+            ChangePasswordRequest request,
+            AdminAuthService auth,
+            HttpContext ctx,
+            CancellationToken ct) =>
+        {
+            var result = await auth.ChangePasswordAsync(request, ct).ConfigureAwait(false);
+
+            switch (result)
+            {
+                case ChangePasswordSuccess:
+                    // 成功后该管理员全部会话已撤销（含当前这条）。必须同时清 Cookie，否则浏览器会带着
+                    // 一个库里已失效的 token 继续请求：前端看到的是"改完密码后每个接口都 401 但不跳登录页"。
+                    ClearAuthCookies(ctx);
+                    return Results.NoContent();
+
+                case ChangePasswordInvalid invalid:
+                    return ProblemResponses.Json(
+                        ctx,
+                        StatusCodes.Status400BadRequest,
+                        "VALIDATION_FAILED",
+                        "密码未通过校验",
+                        errors: invalid.Errors);
+
+                default:
+                    // 已认证但账号已不存在：清 Cookie 并 401，让前端回到登录页而不是停在一个永远 401 的界面
+                    ClearAuthCookies(ctx);
+                    return ProblemResponses.Json(
+                        ctx,
+                        StatusCodes.Status401Unauthorized,
+                        "AUTH_SESSION_EXPIRED",
+                        "Session no longer valid.");
+            }
+        })
+        .WithName("AdminChangePassword")
+        // 已认证即可访问：它改的是"自己的"密码，没有任何业务权限点能更精确地表达这一点。
+        // 主体来自 ICurrentUser，入参里根本没有 actorId，因此不存在"改别人密码"的越权面。
+        .RequireAuthorization()
+        .Produces(StatusCodes.Status204NoContent)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status401Unauthorized);
+
         return app;
+    }
+
+    /// <summary>清掉会话与 CSRF 两个 Cookie（登出、改密成功、账号已不存在时调用）。</summary>
+    /// <remarks>
+    /// <b><c>Path</c> 必须与写入时一致</b>：浏览器是按 (name, domain, path) 三元组匹配 Cookie 的，
+    /// 用默认 <c>Path=/</c> 去删一个 <c>Path=/api/admin</c> 的 Cookie 会静默删不掉，
+    /// 而开发者往往因为"库里会话已撤销"而以为删成功了。
+    /// </remarks>
+    private static void ClearAuthCookies(HttpContext ctx)
+    {
+        ctx.Response.Cookies.Delete(SessionAuthenticationHandler.SessionCookieName, new CookieOptions { Path = "/api/admin" });
+        ctx.Response.Cookies.Delete(AdminCsrfMiddleware.CsrfCookieName, new CookieOptions { Path = "/" });
     }
 
     private static IResult LoginSuccess(HttpContext ctx, AdminLoginSuccess success)
@@ -158,32 +225,6 @@ public static class AdminAuthEndpoints
             success.Role,
             success.Permissions));
     }
-
-    /// <summary>
-    /// 统一错误形状：<c>application/problem+json</c>，字段与契约 <c>Problem</c> 逐字对齐。
-    /// </summary>
-    /// <remarks>
-    /// 这里不抛 <c>DomainException</c> 的原因：登录失败的语义是 401/423，而全局异常中间件
-    /// 对未登记码默认 400；用结果联合 + 显式映射能让状态码在端点里一眼可见，
-    /// 但<b>响应体形状必须与中间件产出的完全一致</b>，否则前端要写两套解析。
-    /// </remarks>
-    private static IResult Problem(HttpContext ctx, int status, string code, string detail)
-        => Results.Json(
-            new ProblemDetails
-            {
-                Type = $"https://httpstatuses.io/{status}",
-                Title = ReasonPhrases.GetReasonPhrase(status),
-                Status = status,
-                Detail = detail,
-                Instance = ctx.Request.Path,
-                Extensions =
-                {
-                    ["code"] = code,
-                    ["correlationId"] = ctx.TraceIdentifier,
-                },
-            },
-            contentType: "application/problem+json",
-            statusCode: status);
 }
 
 /// <summary>

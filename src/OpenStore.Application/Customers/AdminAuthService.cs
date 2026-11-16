@@ -17,7 +17,8 @@ public sealed class AdminAuthService(
     IAdminUserRepository users,
     ISessionRepository sessions,
     IPasswordHasher passwordHasher,
-    IClock clock)
+    IClock clock,
+    ICurrentUser currentUser)
 {
     public async Task<AdminLoginResult> LoginAsync(LoginRequest request, CancellationToken ct)
     {
@@ -96,5 +97,78 @@ public sealed class AdminAuthService(
         }
 
         return sessions.RevokeAsync(tokenHash, clock.UtcNow, SessionRevokeReason.Logout, ct);
+    }
+
+    /// <summary>
+    /// 修改自己的密码（后端设计 §6.7 / INV-AD02 / AC-15）：成功后撤销该管理员<b>全部</b>会话（含当前这条）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>主体只从 <see cref="ICurrentUser"/> 取</b>，入参里没有 <c>actorId</c>——否则"改别人密码"
+    /// 只需要改一个请求体字段，而这条路径恰好是所有授权里后果最大的那条。
+    /// </para>
+    /// <para>
+    /// <b>两步写不是原子的，顺序是刻意的</b>：M1 没有 <c>IUnitOfWork</c> 的实现（端口在，实现未落），
+    /// 撤销会话是 <c>ExecuteUpdate</c>（立即提交）、改密是 <c>SaveChanges</c>，两者无法同事务。
+    /// 因此只能选一个"第二步失败也可接受"的顺序：
+    /// </para>
+    /// <list type="bullet">
+    /// <item><b>先撤销、后改密</b>（本实现）：若保存失败 → 会话全失效、密码仍是旧的。
+    /// 用户重新登录、用旧密码即可，安全轴无损。</item>
+    /// <item><b>先改密、后撤销</b>：若撤销失败 → 库里是新密码、<b>旧会话仍然有效</b>。
+    /// 改密的全部意义就是"把可能被偷的会话踢掉"，这条顺序失败时恰好把唯一想保住的性质丢了，
+    /// 而且用户看到 500 会以为"没改成"，实际已经改成了。</item>
+    /// </list>
+    /// <para>
+    /// 哈希在撤销<b>之前</b>算：PBKDF2 100k 迭代是纯 CPU、不碰库，先算可以在不产生任何副作用的前提下失败。
+    /// </para>
+    /// </remarks>
+    public async Task<ChangePasswordResult> ChangePasswordAsync(ChangePasswordRequest request, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (currentUser.UserId is not { } actorId)
+        {
+            return new ChangePasswordActorGone();
+        }
+
+        var user = await users.GetByIdAsync(actorId, ct).ConfigureAwait(false);
+        if (user is null)
+        {
+            return new ChangePasswordActorGone();
+        }
+
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+
+        // 当前密码错不用 401（契约 D17）：用户已经认证过了，401 会被前端当成"会话过期"踢去登录页，
+        // 而真实原因是他在这个输入框里打错了字 —— 字段级提示才对。
+        if (string.IsNullOrEmpty(request.CurrentPassword)
+            || !passwordHasher.Verify(user.PasswordHash, request.CurrentPassword))
+        {
+            errors["currentPassword"] = [PasswordPolicyText.CurrentPasswordMismatch];
+        }
+
+        var violations = PasswordPolicy.Validate(request.NewPassword);
+        if (violations.Count > 0)
+        {
+            errors["newPassword"] = PasswordPolicyText.Describe(violations);
+        }
+
+        if (errors.Count > 0)
+        {
+            return new ChangePasswordInvalid(errors);
+        }
+
+        var newHash = passwordHasher.Hash(request.NewPassword!);
+        var now = clock.UtcNow;
+
+        await sessions
+            .RevokeAllForActorAsync(SessionActorType.Admin, actorId, now, SessionRevokeReason.PasswordChanged, ct)
+            .ConfigureAwait(false);
+
+        user.ChangePassword(newHash, now);
+        await users.SaveAsync(user, ct).ConfigureAwait(false);
+
+        return new ChangePasswordSuccess();
     }
 }
