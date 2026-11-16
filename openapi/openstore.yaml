@@ -15,32 +15,17 @@ info:
        已逐条记在 `x-doc-deltas`（见本文件末尾）与 `docs/03` 的修订请求里；**如属语义级冲突（不是表述问题），须回报主理人裁决，不得由实现方单方面拍板**。
     2. **契约里不出现的东西，就是有意不出现的**。例如 storefront 任何 DTO 都不含 `onHand/reserved/sold/cost/margin/internalNote`（§5.1 数据隔离表），
        不要"顺手补上"。
+       **"有意不出现"分两种，别混**：① **属于更晚的里程碑**（`docs/00` 里程碑表：`M3` 购物车与下单、`M4` 支付闭环、`M5` 向导与模板）—— 这是**排期**，不是缺；② **遗漏** —— 这是缺陷。
+       判据只认 `docs/00` 的里程碑表。**不要在本文件里再抄一份"哪些已覆盖/未覆盖"的清单**：抄出来它就会漂，而漂的方式是"清单说未覆盖、其实已覆盖"，且**没有人会去核一份手写的清单** —— 已有的那段（`ProblemCode` 下方"不在本枚举内的前缀族"）之所以能用，是因为它挂在枚举旁边、与枚举同生共死。
     3. **破坏性变更**：只允许"新增字段 + 旧字段保留 1 个 minor"；`amount` / `totalPages` / `/checkout/submit` / `sort=relevance` 这四种旧写法**已作废**
        （`docs/03` §13 台账），本文件里出现它们即为 bug。
-
-    # 覆盖范围（**进了什么、没进什么，都是显式决定**）
-
-    "契约里不出现就是有意不出现"这条（上面第 2 条）有个**副作用**：分不清"有意不出现"与"漏了"。所以这里把覆盖口径写死。
-
-    | 类别 | 本轮在契约里 | 说明 |
-    |---|---|---|
-    | 管理端 · 目录与库存 | ✅ 全部 | `products` / `categories` / `attributes` / `attribute-sets` / `inventory`（含变体矩阵三个端点） |
-    | 管理端 · 认证 | ✅ 4 个 | `login` / `logout` / `me` / `change-password` |
-    | 门面 · 浏览 | ✅ 3 个 | `products`（列表/详情）、`categories`、`bootstrap` |
-    | 运维 | ✅ 2 个 | `/health/live`、`/health/ready` |
-    | **门面 · 购买链** | ❌ **不在本轮** | `cart/*`、`checkout/quote`、`checkout/confirm`、`orders/{n}`、`orders/{n}/pay`、`orders/{n}/pay-url` —— 与 `/api/setup/*` 属同一批 |
-    | **管理端 · 订单/退款/设置/仪表盘** | ❌ **不在本轮** | `orders/*`、`refunds/*`、`settings/*`、`dashboard/summary`、`media/*` |
-    | **`/api/setup/*`（向导 9 个端点）** | ❌ **不在本轮** | 但**三个向导码已在 `ProblemCode.enum` 里先行登记**（见该 schema 说明）：码的拼写是契约，**路径的排期不是** |
-
-    **这一格必须诚实读**：`/api/setup/*` 的路径缺失**不是遗漏**，是与购买链同一批的**排期**。不要因为"向导码已在枚举里"就推断"向导路径已进契约"，也不要反过来因为"路径没进"就把码从枚举里删掉——**码与路径是两个轴**（理由见 `ProblemCode` 的说明）。
-    **覆盖口径变更时同步改这张表**：这张表存在的唯一理由，是让下一个人不必靠"数少了几个"来猜。
 
     # 全局约定（读契约前先读这 6 条）
 
     | 约定 | 内容 |
     |---|---|
     | 金额 | **一律** `{"amountMinor": 29900, "currency": "CNY"}`（`#/components/schemas/Money`）。禁止裸数字、禁止 `"29.90"` 字符串、**禁止旧字段名 `amount`**。列表里的价格、变体价、运费、退款额全部如此 |
-    | 分页 | 请求 `page`/`pageSize`；响应固定 `{items, page, pageSize, total, pageCount}`（`pageCount`，不是 `totalPages`）。`pageSize` 默认 24、上限 100（超限 `400 PAGE_SIZE_EXCEEDED`）；`page` 上限 100（超限 `400 PAGE_OUT_OF_RANGE`）；`page` 未超 100 但超过总页数 → **200 + `items: []`**，不是错误 |
+    | 分页 | 请求 `page`/`pageSize`；响应固定 `{items, page, pageSize, total, pageCount}`（`pageCount`，不是 `totalPages`）。`pageSize` 默认 24、上限 100（超限 `400 PAGE_SIZE_EXCEEDED`）；**`page` 没有常数上限，边界是 `pageCount`**：`page > pageCount` → **200 + `items: []`**（迭代终止信号，不是错误）；`page < 1` → `400 PAGE_OUT_OF_RANGE` |
     | 时间 | ISO-8601 带偏移（`2025-11-15T16:34:00+08:00`）。服务端 UTC 存储，按 `StoreSettings.TimeZone` 或 `locale` 渲染 |
     | 枚举 | 全部字符串（后端 `JsonStringEnumConverter`），例如 `status: Active`，绝不出现 `1`/`0` 数字魔法值 |
     | 错误 | 全部 `application/problem+json`（RFC 7807）+ 扩展 `code`/`correlationId`/`errors`/`details`。`code` 是**封闭枚举**（`#/components/schemas/ProblemCode`），前端只写一套 `code → i18n key` 的映射 |
@@ -1550,8 +1535,8 @@ components:
       name: page
       in: query
       required: false
-      description: '页码；上限 100。超上限 → `400 PAGE_OUT_OF_RANGE`；超过总页数（但 ≤100）→ `200 + items: []`'
-      schema: { type: integer, minimum: 1, maximum: 100, default: 1 }
+      description: '页码。**没有常数上限**：超过总页数 → `200 + items: []`（迭代终止信号）；`page < 1` → `400 PAGE_OUT_OF_RANGE`。上限曾是 100，会让"存得下但翻不到"的商品静默存在（`docs/03` §8.2）'
+      schema: { type: integer, minimum: 1, default: 1 }
     PageSize:
       name: pageSize
       in: query
@@ -2511,7 +2496,7 @@ components:
           但**不要指望本轮能真的调出这个响应**。这是排期问题，不是契约问题；把它从枚举里删掉才是破坏契约。
         - **不在枚举内、但有端点** → 这是**缺陷**，必须先补枚举再用（`x-doc-deltas` D18 就是这条的执行痕迹）。
 
-        **例外：三个向导码 `SetupAlreadyCompleted` / `SetupInProgress` / `SetupResetting` 已先行登记在本枚举里**（`/api/setup/*` 的路径不在本轮覆盖范围内，见 `info.description` 的「覆盖范围」）。理由：它们的拼写已被 `docs/01`、`docs/03` §5.1、架构三处声明为**契约**，
+        **例外：三个向导码 `SetupAlreadyCompleted` / `SetupInProgress` / `SetupResetting` 已先行登记在本枚举里**（`/api/setup/*` 的**路径**按 `docs/00` 里程碑表属 **`M5`**，还没进契约）。理由：它们的拼写已被 `docs/01`、`docs/03` §5.1、架构三处声明为**契约**，
         而"改错误码等于破坏契约"这条约束**缺了枚举就成了唯一没有机器执行的地方** —— 前端只能手写字符串，写错一个字母
         不报错，只表现为"向导页面卡在加载态"。**PascalCase 是需求原文，不要"统一"成大写下划线。**
       enum:
@@ -2849,12 +2834,16 @@ x-doc-deltas:
       why: '原文说了"要返回计数"但没给 code。前缀落在既有 `CATALOG_*` 族内，未新增前缀族'
     - id: D11
       state: resolved
-      where: docs/03 §5.1/§5.6.1 `maxOrderQuantity` = `min(99, available)`（原冲突对象是数据模型 §8.2 的旧句，该句已在 02 里带删除线作废）
+      where: docs/03 §5.1/§5.6.1 `maxOrderQuantity` = `min(99, available)`（原冲突对象是数据模型 §8.2 里那句**带删除线的旧句**："= ORDER_LINE_QUANTITY_CAP（默认 10），与库存完全无关"）
       contract: '`maxOrderQuantity = min(99, available)`（真实 available，不受截断影响），**主理人裁决 R1 已定稿**'
       why: |
         **本条已消解，不是待办**：数据模型 §8.2 已按 A1 改判并在原文留删除线 + "已作废"标注，
         "契约 vs 数据模型"的冲突不再存在，任何一侧都不需要再改。
         保留编号只为追溯（02/04 可能引用过 D11），**不要读成"还有一条没处理"**。
+
+        **为什么 `where` 指到那一句而不是"§8.2"这一节**：`resolved` 本身也是状态句，它同样会过期——
+        如果哪天 02 的 A1 口径又变，这条 `resolved` 就会变成"标着已消解、实际又冲突"。**节会变，带删除线的那句不会**：
+        指到具体那句话，读者能自己判断"它还是不是原来那个冲突"，不必相信我这里的结论。
 
         R1 裁决理由（原文要点）：前台加购必须受可售量约束，否则用户能加 10 件而库存只有 3 件，
         报错要等到下单那一步 —— 那时用户已经填完地址与支付方式，属于最贵的失败点。
