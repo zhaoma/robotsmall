@@ -446,3 +446,14 @@ frontend/**/.vite/
 # 一旦被 `git add -A` 扫进去，`git status` 就再也回不到干净，
 # 而"树是干净的"是本项目判断"我读的是哪一版"的唯一依据。
 .workbuddy/
+
+## ---------------------------------------------------------------------------
+## 本地开发数据库（不是项目产物）
+## ---------------------------------------------------------------------------
+# Dev 环境由 `Program.cs` 的 MigrateAsync 建表、DevAdminSeeder 建管理员，
+# 每次启动都会改写这个文件；入库等于让 `git status` 永远有一行 M，
+# 于是"我改的东西没夹带别人的"这件事就无法自证。
+# 需要它时：删掉本地文件，直接跑一次 API 即可重建。
+src/OpenStore.Api/openstore.dev.db
+src/OpenStore.Api/openstore.dev.db-shm
+src/OpenStore.Api/openstore.dev.db-wal
