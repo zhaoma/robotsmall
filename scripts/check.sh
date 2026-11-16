@@ -229,7 +229,10 @@ run_step() {
     # 时候没人看得到，判据等于白设计。同 `soak.sh 来源 = HEAD:<sha>`：**锚必须
     # 出现在绿的路径上**，只在失败时显示的锚等于没有锚。
     local detail
-    detail=$(sed -n 's/^DETAIL: //p' "$log" 2>/dev/null | head -1)
+    # 明细可以有多行（如"47 个链接 / 3 类 / 0 个空"分别来自三条统计），
+    # 只取第一行会让后面的数永远不出现 —— 而那正是"绿的时候没人看得见"的复发。
+    # 多行用 `｜` 拼在一行里：OK 行必须仍然是一行，否则 `ok` 的列对齐会散。
+    detail=$(sed -n 's/^DETAIL: //p' "$log" 2>/dev/null | awk 'BEGIN{ORS=""} {if (NR>1) printf "｜"; print}')
     if [ -n "${detail:-}" ]; then printf 'ok（%s）\n' "$detail"
     else printf 'ok\n'; fi
     PASS=$((PASS+1))
