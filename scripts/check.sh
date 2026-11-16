@@ -5,7 +5,8 @@
 # 用法：
 #   ./scripts/check.sh            # 跑当前里程碑已实现的全部步骤
 #   ./scripts/check.sh --full     # 跑全部步骤（含未实现的，未实现即判红；步数以 --list 为准，本行不写数字）
-#   ./scripts/check.sh --fast     # 只跑 1~6 步（提交前用，目标 < 90 秒）
+#   ./scripts/check.sh --fast     # 提交前档：1~6 步 + fixture 声明侧判据 + 门禁自证（目标 < 90 秒）
+#                                 #   —— **不列序号**：序号跳过、名字不跳；写死序号的那句话已经错过三次
 #   ./scripts/check.sh --list     # 只列步骤，不执行
 #
 # 退出码：见 `docs/05 §4.6`（0 通过 / 1 失败 / 2 未验证 / 3 用法错误 的**定义只在那里**，
@@ -56,6 +57,18 @@ verdict_token() {  # $1 pass $2 fail $3 skip $4 mode → stdout token；返回�
   printf 'VERDICT: PASS(%s/%s)' "$p" "$n"; return 0
 }
 
+# 把日志里 `DETAIL: ` 开头的行拼成一行明细（`｜` 分隔）。
+# **抽成函数是为了能被 `--self-test` 直接喂合成日志**：这段输出是门禁的对外契约
+# （backend 的 `⑤-b` 靠它做到"绿也必须可区分：检查了 N 个"），而它此前唯一的验证
+# 是提交信息里贴的一段手工 printf —— 手工验证不会在有人把它改回 `head -1` 时变红，
+# 而改坏的后果不报错，只是那些数重新变成看不见。
+# 三处不可省的细节：只认**行首** `DETAIL: `（正文里提到 DETAIL 不算）、多行用 `｜`
+# 拼（OK 行必须是一行，否则 `ok` 之后的列对齐会散）、没有明细时输出空串
+# （调用方据此打裸 `ok`，而不是 `ok（）`）。
+join_detail() {
+  sed -n 's/^DETAIL: //p' "$1" 2>/dev/null | awk 'BEGIN{ORS=""} {if (NR>1) printf "｜"; print}'
+}
+
 self_test_exit_codes() {
   local failn=0 total=0
   vc() {  # $1 名称 $2 期望码 $3 期望 token $4 pass $5 fail $6 skip $7 mode
@@ -69,7 +82,7 @@ self_test_exit_codes() {
       failn=$((failn+1))
     fi
   }
-  printf '== check.sh 退出码自证（四个码各一例，不跑构建）==\n'
+  printf '== check.sh 自证（退出码四值 + 明细渲染，不跑构建、不占锁）==\n'
   vc "全绿"                          0 "VERDICT: PASS(18/18)"       18 0 0  default
   vc "有步骤失败 → 1（即便也有跳过）"  1 "VERDICT: FAIL(17/18)"       17 1 0  default
   vc "--full 下有跳过 → 2（承诺全部却不全）" 2 "VERDICT: PARTIAL(13/18)" 13 0 5 full
@@ -86,9 +99,38 @@ self_test_exit_codes() {
     failn=$((failn+1))
   fi
 
+  # ---- run_step 的明细后缀（门禁输出的契约）----------------------------------
+  # 合成日志而不是真步骤：真步骤的输出随仓库内容变，用它当样本等于"判据捏被检对象"（塑形）。
+  local dtlog
+  dtlog=$(mktemp "${TMPDIR:-/tmp}/check-detail.XXXXXX") || { echo "FAIL: mktemp 失败"; return 1; }
+  dt() {  # $1 名称 $2 期望值 $3 日志内容
+    local name="$1" want="$2" got
+    total=$((total+1))
+    printf '%s' "$3" > "$dtlog"
+    got=$(join_detail "$dtlog")
+    if [ "$got" = "$want" ]; then
+      printf '  ok    %s → [%s]\n' "$name" "$got"
+    else
+      printf '  WRONG %s → 期望=[%s] 实得=[%s]\n' "$name" "$want" "$got"
+      failn=$((failn+1))
+    fi
+  }
+  dt "三行 DETAIL → 用 ｜ 拼一行" "A=1｜B=2｜C=3" 'DETAIL: A=1
+DETAIL: B=2
+DETAIL: C=3
+'
+  dt "没有 DETAIL → 空串（调用方打裸 ok，不出现 ok（））" "" 'build ok
+0 errors
+'
+  dt "正文里提到 DETAIL 不算明细（只认行首）" "" 'see DETAIL: X in the log
+  DETAIL: indented
+'
+  rm -f "$dtlog"
+
   echo
   if [ "$failn" -eq 0 ]; then
-    printf '== 自证通过：%s 项（0/1/2/3 各一例）==\n' "$total"
+    printf 'DETAIL: 退出码四值 + 明细渲染共 %s 项全过\n' "$total"
+    printf '== 自证通过：%s 项（退出码四值 + run_step 明细后缀，逐项见上）==\n' "$total"
     return 0
   fi
   printf '== 自证失败：%s/%s 项 ==\n' "$failn" "$total"
@@ -228,11 +270,11 @@ run_step() {
     # 都是绿），但 `run_step` 只在失败时回放日志 —— 于是判据把话印出来，绿的
     # 时候没人看得到，判据等于白设计。同 `soak.sh 来源 = HEAD:<sha>`：**锚必须
     # 出现在绿的路径上**，只在失败时显示的锚等于没有锚。
-    local detail
     # 明细可以有多行（如"47 个链接 / 3 类 / 0 个空"分别来自三条统计），
     # 只取第一行会让后面的数永远不出现 —— 而那正是"绿的时候没人看得见"的复发。
-    # 多行用 `｜` 拼在一行里：OK 行必须仍然是一行，否则 `ok` 的列对齐会散。
-    detail=$(sed -n 's/^DETAIL: //p' "$log" 2>/dev/null | awk 'BEGIN{ORS=""} {if (NR>1) printf "｜"; print}')
+    # 拼装规则见 `join_detail`（**唯一实现**，`--self-test` 喂合成日志验它）。
+    local detail
+    detail=$(join_detail "$log")
     if [ -n "${detail:-}" ]; then printf 'ok（%s）\n' "$detail"
     else printf 'ok\n'; fi
     PASS=$((PASS+1))
@@ -290,6 +332,7 @@ if [ "$MODE" = "list" ]; then
   step 21 soak_self_test      "压测判定逻辑自证（跑 HEAD 版：验的是提交后的状态）"
   step 22 ledger_landing      "台账裁决的落点在正文里真的提过（L1~L5，含棘轮）"
   step 23 migration_checks    "配置声明的 CHECK 必须在迁移里真的被创建（含自证）"
+  step 24 gate_self_test      "门禁自身的退出码与明细渲染自证（不跑构建、不占锁）"
   exit 0
 fi
 
@@ -489,6 +532,20 @@ if [ "${goto_summary:-0}" != "1" ]; then
              cat "$d/out"
              rm -rf "$d"; exit $rc'
 fi
+
+# ---- 24 门禁自身的自证 -------------------------------------------------------
+# **为什么它必须在门禁里跑**：`--self-test` 早就存在，而全仓没有任何一处调用它 ——
+# 一个没人跑的自证会烂掉（同第 17 步注释里 `verify-seo-matrix.sh` 的 self-test 坏过
+# 一整轮没人发现）。它验的两件事恰好都是"改坏了不报错"的那种：
+#   ① 退出码四值（0/1/2/3）—— 全组 CI 用同一个码表判红绿，码表错位会让运维照着
+#      `3` 去查参数，而真正的失败是 `1`；
+#   ② `run_step` 的明细渲染 —— `⑤-b` 的"绿也必须可区分：检查了 N 个"全靠它。
+# 它是 0.3 秒的纯函数 + 合成日志，没有构建、没有 IO，所以放在 `--fast` 的跳跃**之后**：
+# PR 档也要跑（PR 档正是唯一不跑第 8~23 步的地方，而这条恰恰最便宜最该跑）。
+# 子进程不会被并发锁挡住：`--self-test` 在 `acquire_lock` 之前就 exit 了（见脚本前段）。
+# 位置在 `--list` 的 `exit 0` 之后、清单对账之前：`--list` 不执行它，对账要看得见它。
+run_step 24 gate_self_test "门禁自身的退出码与明细渲染自证" \
+  ./scripts/check.sh --self-test
 
 # ---- 清单自证：--list 声明 == 实跑处理 -------------------------------------
 # 步数写死连续错过三次（15→16 步时没跟着改、加 17、加 18）。根因不是"忘了改那个数字"：
