@@ -33,7 +33,12 @@ ROOT = os.getcwd()
 
 # `docs/05 §4.6` / `docs/05-部署运维.md §4.6` / `docs/01 §6 F4` 都算引用；
 # 节号支持 4 / 4.6 / 2.6.1 三级。
-REF = re.compile(r'docs/(\d{2})(?:-[^\s`\'"§]*?)?\s*§\s*(\d+(?:\.\d+)*)')
+# 第 2 组是**文件名后缀**（含前导 `-`），它是"写全名时按全名核"的唯一依据 ——
+# 不捕获它就只能拿两位编号去 glob，而本仓有两个 `02-*` 文件
+# （`02-数据模型.md` / `02-数据模型-M1落地对照表.md`，后者排序在前），
+# 于是 `docs/02-数据模型.md §7.3.4` 会被解析到对照表上、报"该文档里没有这个节号"。
+# 那条报错本身是对的（引用的文件确实没被核到），错的是**核错了文件**。
+REF = re.compile(r'docs/(\d{2})((?:-[^\s`\'"§]*?)?)\s*§\s*(\d+(?:\.\d+)*)')
 
 def md_files():
     out = []
@@ -43,10 +48,27 @@ def md_files():
                 out.append(os.path.join(dirpath, n))
     return sorted(out)
 
-def doc_for(prefix):
-    """docs/05 → docs/05-部署运维.md（按两位编号前缀找，不写死文件名）"""
-    hits = [p for p in md_files() if os.path.basename(p).startswith(prefix + '-')]
-    return hits[0] if hits else None
+def doc_candidates(prefix, suffix, root=ROOT):
+    """返回候选文档路径列表。
+
+    写全名（`docs/02-数据模型.md`）→ **只核那一个文件**，不参与 glob。
+    只写编号（`docs/02`）→ 所有 `02-*.md` 都算候选，**任一命中即视为解析得到**。
+        为什么"任一"：短名对读者本来就是模糊的，这条门禁判的是"这个引用悬不悬空"，
+        而不是"作者心里想的是哪一篇"。要精确就写全名。
+    """
+    if suffix:
+        p = os.path.join(root, 'docs', prefix + suffix)
+        return [p] if os.path.isfile(p) else []
+    # 必须按传入的 root 走，**不能用全局 ROOT**：`--self-test` 在临时目录里造样本，
+    # 若这里读真实 docs/，注入"文档把 §4.6 改成 §4.7"会因为真实 docs/ 里仍有 §4.6
+    # 而永远不红 —— 自证当场变成恒绿（本仓已出现过一次，就是这次改动的第一版）。
+    d = os.path.join(root, 'docs')
+    out = []
+    for dirpath, _, names in os.walk(d):
+        for n in names:
+            if n.endswith('.md') and n.startswith(prefix + '-'):
+                out.append(os.path.join(dirpath, n))
+    return sorted(out)
 
 HEADING = re.compile(r'^#{1,5}\s*(\d+(?:\.\d+)*)[.\s、]')
 
@@ -63,7 +85,7 @@ def scan_scripts(root):
     for p in sorted(glob.glob(os.path.join(root, 'scripts', '*.sh'))):
         for i, line in enumerate(io.open(p, encoding='utf-8'), 1):
             for m in REF.finditer(line):
-                out.append((os.path.basename(p), i, m.group(1), m.group(2), m.group(0)))
+                out.append((os.path.basename(p), i, m.group(1), m.group(2), m.group(3), m.group(0)))
     return out
 
 def judge(root):
@@ -71,29 +93,25 @@ def judge(root):
     failures = []
     refs = scan_scripts(root)
     cache = {}
-    for script, line, prefix, num, raw in refs:
-        path = doc_for(prefix) if root == ROOT else _doc_for(root, prefix)
-        if path is None:
+    for script, line, prefix, suffix, num, raw in refs:
+        cands = doc_candidates(prefix, suffix, root)
+        if not cands:
             failures.append(('%s:%d' % (script, line),
-                             '引用了 docs/%s 的 §%s，但 docs/ 下没有以 %s- 开头的文件（%s）'
-                             % (prefix, num, prefix, raw)))
+                             '引用了 docs/%s%s 的 §%s，但 docs/ 下没有这个文件（%s）'
+                             % (prefix, suffix, num, raw)))
             continue
-        if path not in cache:
-            cache[path] = headings(path)
-        if num not in cache[path]:
+        hit = False
+        for path in cands:
+            if path not in cache:
+                cache[path] = headings(path)
+            if num in cache[path]:
+                hit = True
+                break
+        if not hit:
             failures.append(('%s:%d' % (script, line),
                              '引用了 %s §%s，但该文档里没有这个节号（%s）'
-                             % (os.path.relpath(path, root), num, raw)))
+                             % (os.path.relpath(cands[0], root), num, raw)))
     return failures, len(refs)
-
-def _doc_for(root, prefix):
-    d = os.path.join(root, 'docs')
-    if not os.path.isdir(d):
-        return None
-    for n in sorted(os.listdir(d)):
-        if n.endswith('.md') and n.startswith(prefix + '-'):
-            return os.path.join(d, n)
-    return None
 
 def report(failures, total):
     for loc, msg in failures:
@@ -169,6 +187,32 @@ def self_test():
         f4, _ = judge(nodoc_dir)
         check(len(f4) == 1 and '05' in f4[0][1],
               '注入：只存在 docs/06 却引用 docs/05 → 红：%s' % (f4[0][1][:60] if f4 else '未报红'))
+
+        # 方向五/六：同一个编号下有两篇文档时，**写全名必须按全名核**。
+        # 现实来源：本仓 `02-数据模型.md` 与 `02-数据模型-M1落地补充表/对照表` 并存，
+        # 后者排序在前 —— 旧实现只取两位编号去 glob、拿第一个，于是
+        # `docs/02-数据模型.md §7.3.4` 被解析到对照表上，报"该文档里没有这个节号"。
+        # 那条红是**假红**：引用写得完全正确，核错了文件。
+        two_dir = os.path.join(tmp, 'two')
+        write_sample(two_dir, 'docs/02-A.md', SAMPLE_DOC)                       # 有 §4.6
+        write_sample(two_dir, 'docs/02-B.md', '# 另一篇\n\n### 9.9 别处才有的节\n')
+        write_sample(two_dir, 'scripts/a.sh',
+                     '#!/usr/bin/env bash\n# 见 `docs/0' '2-A.md §4.6`\n')
+        f5, _ = judge(two_dir)
+        check(not f5, '同编号两篇文档时，写全名按全名核（§4.6 在 02-A 里）→ 绿：%s'
+              % (f5[0][1][:60] if f5 else '绿'))
+
+        # 方向六是方向五的反面，缺了它"写全名"可以退化成"glob 任一篇"还照样绿：
+        # 引用 02-A 里**没有**、只有 02-B 有的节号 → 必须红。
+        two_bad = os.path.join(tmp, 'twobad')
+        write_sample(two_bad, 'docs/02-A.md', SAMPLE_DOC)
+        write_sample(two_bad, 'docs/02-B.md', '# 另一篇\n\n### 9.9 别处才有的节\n')
+        write_sample(two_bad, 'scripts/a.sh',
+                     '#!/usr/bin/env bash\n# 见 `docs/0' '2-A.md §9.9`\n')
+        f6, _ = judge(two_bad)
+        check(len(f6) == 1 and '§9.9' in f6[0][1],
+              '注入：写全名但该节只在同编号的另一篇里 → 必须红（证明没有退回 glob）：%s'
+              % (f6[0][1][:60] if f6 else '未报红'))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -178,8 +222,8 @@ def self_test():
     if failed:
         print('== 自证失败：%d 项不符合预期' % len(failed))
         return 1
-    print('== 自证通过：%d 项（正样本绿 / 文档改节号红 / 脚本引用不存在节红 / 跨文档编号缺失红）'
-          % len(checks))
+    print('== 自证通过：%d 项（正样本绿 / 文档改节号红 / 脚本引用不存在节红 / 跨文档编号缺失红'
+          ' / 同编号两篇时全名按全名核 / 全名指错篇必红）' % len(checks))
     return 0
 
 args = sys.argv[1:]
