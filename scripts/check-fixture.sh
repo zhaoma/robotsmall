@@ -248,7 +248,9 @@ slug_rows() {   # → type <TAB> key <TAB> locale <TAB> slug
 hdr "── R 结构 / reset 边界 ─────────────────────────────────────────────────"
 # ── R1 reset 删除边界必须覆盖每一个实体 ──────────────────────────────────────
 # 这是整份 fixture 最容易出洞的地方，而且洞**不会自己报错**：
-#   `--reset` 的删除集 = slug 前缀 ∪ InternalCode 白名单（02 §7.3.3）。
+#   三项并集（slug 前缀 / InternalCode / 静态页白名单，见 02 §7.3.3）；另有**第四项谓词**
+#   `SlugHistory`（按 EntityType+EntityId 清依赖行，不计入三项并集——它没有自身标记可判）。
+#   别把这里的注释当事实来源：口径的唯一出处是 02 §7.3.3。
 #   静态页的 slug 是 `guanyu` / `about`（**刻意的**：要证明 per-locale slug），
 #   而 StaticPage **没有 InternalCode 列** —— 于是它两个谓词都不命中。
 #   后果链：reset 删不掉它 → 下一轮的 storefront 有"关于我们"却没有商品 →
