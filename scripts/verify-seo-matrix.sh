@@ -287,8 +287,12 @@ run_matrix(){
     path=$(path_of "$u")
     if disallowed "$path"; then
       [ "$ni" = "yes" ] && fail "S8 $path 同时 Disallow + noindex" "指令互相抵消：爬虫读不到 noindex，页面仍以裸链接进结果"
-      if [ -n "$can" ] && ! same "$can" "$u"; then
-        fail "S8 $path 同时 Disallow + 外指 canonical" "canonical 读不到 → 归并失效，白做"
+      # 与下面 noindex 分支**同口径**：都用归一后的比较。
+      # 原来这里是逐字比 `same`，于是 `/zh/search?q=abc` 的 canonical 若带个 `&utm_source=x`
+      # （实现其实是自指）会被判成"外指 canonical" —— 一个指向错误原因的假红。
+      # 规矩：**同一个判据的两个分支出现同一个问题，两次必须同口径**；只出现一次时才可按分支选口径。
+      if [ -n "$can" ] && [ "$(norm_url "$can")" != "$(norm_url "$u")" ]; then
+        fail "S8 $path 同时 Disallow + 外指 canonical" "canonical 读不到 → 归并失效，白做；规范化后仍不等（实际=$can）"
       fi
     fi
     if [ "$ni" = "yes" ] && [ -n "$can" ]; then
@@ -694,7 +698,21 @@ CASES
   [ "$rc_nobase" = "3" ] || { echo "  WRONG 没给站点地址 → 期望 rc=3 实得 rc=$rc_nobase"; sfail=$((sfail+1)); }
   [ "$sfail" = "$sfail_before" ] && echo "  ok    用法错误（不认识参数 / 没给地址）→ rc=3，与 1/2 区分开"
 
-  [ "$sfail" -eq 0 ] && { echo "== 自证通过：正样本绿；${ninj} 个注入各自红在预期断言上；用法错误 rc=3"; return 0; }
+  # 结构断言：S8 的两条分支必须**同口径**。
+  # 行为层面它现在跑不到（S7 保证前台路径没有 Disallow，所以 Disallow 分支对 storefront
+  # 是死路），正因如此它不会有注入覆盖 —— 一个没有注入覆盖的断言，只能靠结构断言防回归：
+  # 有人把 Disallow 分支改回逐字比 `same`，这条就红。
+  local s8_body s8_lit s8_norm
+  s8_body=$(awk '/S8 交叉校验/,/S9 归档商品/' "$0")
+  s8_lit=$(printf '%s' "$s8_body" | grep -c 'same "\$can" "\$u"')
+  s8_norm=$(printf '%s' "$s8_body" | grep -c 'norm_url "\$can"')
+  [ "$s8_lit" -eq 0 ] && [ "$s8_norm" -ge 2 ] || {
+    echo "  WRONG S8 两条分支口径不一致（逐字比出现 $s8_lit 次，归一比较出现 $s8_norm 次；应 0 与 >=2）"
+    sfail=$((sfail+1))
+  }
+  [ "$s8_lit" -eq 0 ] && [ "$s8_norm" -ge 2 ] && echo "  ok    S8 两条分支同口径（都用 norm_url，没有一边逐字比）"
+
+  [ "$sfail" -eq 0 ] && { echo "== 自证通过：正样本绿；${ninj} 个注入各自红在预期断言上；用法错误 rc=3；S8 两分支同口径"; return 0; }
   echo "== 自证失败：$sfail 项不符合预期"; return 1
 }
 
