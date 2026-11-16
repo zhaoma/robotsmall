@@ -1,0 +1,9 @@
+# check-ledger-landing 基线。刷新必须是一次显式提交（会进 diff，可审）。
+# 刷新：scripts/check-ledger-landing.sh --update-baseline --doc docs/03-后端设计.md
+# 基线 commit=7e08890
+ledger_rows=60
+checked=51
+targets=141
+hits=117
+target_miss=24
+unkeyworded=9

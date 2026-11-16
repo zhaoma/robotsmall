@@ -67,6 +67,7 @@ for a in "$@"; do
       echo "  [L2] 落点声明的节号在文档标题里存在                   失败 rc=1（引用漂移）"
       echo "  [L3] 落点节内出现过该行的代码标识符                   失败 rc=1（--strict 降到目标级）"
       echo "  [L4] 不可核的行必须计数并列原文；可核行数为 0 判红     失败 rc=2（空集绿）"
+      echo "  [L5] 不可核行数与目标级未命中数只减不增（对基线文件）   失败 rc=1；无基线 rc=2"
       exit 0 ;;
     -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
   esac
@@ -94,6 +95,20 @@ QUIET = os.environ.get('LL_QUIET') == '1'
 STRICT = os.environ.get('LL_STRICT') == '1'
 BASE = os.environ.get('LL_BASE', '?')
 BASE_SUB = os.environ.get('LL_BASE_SUB', '')
+BASELINE = os.environ.get('LL_BASELINE', 'scripts/ledger-landing-baseline.txt')
+UPDATE_BASELINE = os.environ.get('LL_UPDATE_BASELINE') == '1'
+
+# 判据表的**唯一真源**。结论行从它派生，所以新增一条判据不需要改结论行；
+# 而 bash 的 `--list` 是给人看的另一份，自证里有一条专门对账两份的编号集合。
+# 为什么要这么绕：`--list` 说五条、实跑四条，是最容易发生也最难看出来的一种漂移
+# （两边都只有四条时更看不出来）。只留一份就没人写文档，两份就必须有一条断言盯着。
+CHECKS = [
+    ('L1', '台账可解析：表头在、列数=5、数据行 > 0（rc=2）'),
+    ('L2', '落点声明的节号在文档标题里存在（rc=1，引用漂移）'),
+    ('L3', '落点节内出现过该行的代码标识符（rc=1，--strict 降到目标级）'),
+    ('L4', '不可核的行必须计数并列原文；可核行数为 0 判红（rc=2，空集绿）'),
+    ('L5', '不可核行数与目标级未命中数只减不增（对基线文件，rc=1）'),
+]
 
 def die(msg):
     print(msg)
@@ -279,6 +294,11 @@ if unkeyworded:
     print()
 
 if target_miss:
+    # 三种成因的修法不同，而措辞很容易把人一律赶去改正文。分类是 backend 核完 26 条给的：
+    # 他自己那轮是 1 条「正文真缺」+ 1 条「落点标错节」+ 24 条「落点写多了」。
+    print('  （"找不到"有三种成因，修法不同 —— 别一律去补正文：')
+    print('     ① 正文真缺 → 补正文；② 落点列写多了（把"相关章节"当落点）→ 收紧落点，正文不动；')
+    print('     ③ 落点标错节（指到同号的另一条上）→ 改落点，正文不动。判据只认"名字在不在"，分不出这三种。）')
     if QUIET and not STRICT:
         print('  目标级未命中 %d 个（--quiet 已折叠；去掉 --quiet 或加 --strict 查看明细）'
               % len(target_miss))
@@ -310,6 +330,79 @@ if checked == 0:
     print('  判据在这个文档上等于没运行 —— 这时它的绿不能当"台账已核查"用。')
     sys.exit(2)
 
+# ---- L5：两个质量数只减不增 -------------------------------------------------
+# 为什么要这条：上面每个数每天都印出来，但**没有任何一条断言会在它们变坏时红**。
+# 一个只被印出来、不被管着的数字，三个月后那一行没人再看 —— 那是装饰指标。
+# 判据：一个数字被印出来只证明它可观测；证明它被管着，得有另一条断言。
+# 基线由 --update-baseline 显式刷新（刷新会进 diff，可审），**不自动跟随** ——
+# 自动跟随等于没有基线。
+metrics = {
+    'ledger_rows': len(rows),
+    'checked': checked,
+    'targets': targets,
+    'hits': hits,
+    'target_miss': len(target_miss),
+    'unkeyworded': len(unkeyworded),
+}
+GUARDED = ('unkeyworded', 'target_miss')      # 只减不增：盲区与被管住的存量
+
+baseline = {}
+if os.path.exists(BASELINE):
+    for ln in io.open(BASELINE, encoding='utf-8'):
+        ln = ln.strip()
+        if not ln or ln.startswith('#') or '=' not in ln:
+            continue
+        k, v = ln.split('=', 1)
+        if v.strip().isdigit():
+            baseline[k.strip()] = int(v.strip())
+
+if BASELINE == '-':
+    # **自证样本必须能关掉 L5，而且关掉要出声**：基线是对真实台账的棘轮，
+    # 在合成样本上恒不适用。但"不适用"不能写成"通过"——静默跳过会让自证
+    # 的 12 个样本看起来都验过 L5，而它们一个都没验。
+    print('  [L5] skip —— 自证样本不验基线（棘轮对合成台账不适用）')
+    print()
+elif UPDATE_BASELINE:
+    with io.open(BASELINE, 'w', encoding='utf-8') as f:
+        f.write('# check-ledger-landing 基线。刷新必须是一次显式提交（会进 diff，可审）。\n')
+        f.write('# 刷新：scripts/check-ledger-landing.sh --update-baseline --doc %s\n' % DOC)
+        f.write('# 基线 commit=%s\n' % BASE)
+        for k in metrics:
+            f.write('%s=%d\n' % (k, metrics[k]))
+    print('已刷新基线：%s（commit=%s）' % (BASELINE, BASE))
+    print()
+
+regressions = []
+if baseline:
+    print('  与基线对比（%s）：' % BASELINE)
+    for k in metrics:
+        old = baseline.get(k)
+        if old is None:
+            print('    %-12s %5d  （基线无此项）' % (k, metrics[k]))
+            continue
+        mark = ''
+        if k in GUARDED:
+            mark = '  ok' if metrics[k] <= old else '  **变差了（只许只减不增）**'
+            if metrics[k] > old:
+                regressions.append((k, old, metrics[k]))
+        print('    %-12s %5d  (基线 %d)%s' % (k, metrics[k], old, mark))
+    print()
+elif not UPDATE_BASELINE and BASELINE != '-':
+    print('GATE FAILED: ledger_baseline (L5)')
+    print('  查不到基线文件 %s —— 这条判据没运行，不是通过。' % BASELINE)
+    print('  首次接入或确认数字已改善后，显式刷新一次并把基线文件一起提交：')
+    print('    scripts/check-ledger-landing.sh --update-baseline --doc %s' % DOC)
+    sys.exit(2)
+
+if regressions:
+    print('GATE FAILED: ledger_regression (L5)')
+    print('  两个质量数只许只减不增：不可核行数（盲区）与目标级未命中数（存量待办）。')
+    for k, old, new in regressions:
+        print('    %s：基线 %d → 现在 %d（+%d）' % (k, old, new, new - old))
+    print('  变多通常是：新加的台账行落点没落 / 落点列写宽了 / 把可核的标识符改成了散文。')
+    print('  确认是有意为之，就 --update-baseline 并把基线文件的改动一起提交（让它在 diff 里被看见）。')
+    print()
+
 # --strict：每个落点都要命中。默认档不判红不是"宽容"，是因为首次接入时 26/131 个落点
 # 是历史存量，一次全红只会让人把脚本关掉（本轮 ⑤-a/⑤-b 的裁决就是这个道理）。
 # 但红必须**有 GATE FAILED 行**：没有规则名的失败，日志里就是一段普通输出。
@@ -318,11 +411,13 @@ if STRICT and target_miss:
     print('  --strict 下每个落点都要命中；上面 %d 条未命中任一即红。' % len(target_miss))
     print()
 
-if l2_fail or l3_fail or (STRICT and target_miss):
+if l2_fail or l3_fail or regressions or (STRICT and target_miss):
     sys.exit(1)
 
-print('结论：L1 ok｜L2 ok｜L3 ok｜L4 ok（%d 行可核 / %d 行不可核，不可核的已逐行列出）'
-      % (checked, len(unkeyworded)))
+# 结论行从 CHECKS 派生，不写死：加一条判据不需要回来改这一行，
+# 而自证里" --list 与实跑编号集合一致"那条会拦住两份清单的漂移。
+print('结论：%s（%d 行可核 / %d 行不可核，不可核的已逐行列出）'
+      % ('｜'.join('%s ok' % c[0] for c in CHECKS), checked, len(unkeyworded)))
 print('      本判据只证明「落点那一节里提过这个名字」，不证明「说的是那个意思」。')
 print('      语义相反 / 号过期 / 跨文件互斥 —— 这三类它一条都挡不住，别拿它的绿去支撑它们。')
 sys.exit(0)
@@ -419,7 +514,7 @@ EOF
     total=$((total + 1))
     local out rc
     out=$(env LL_DOC="$4" LL_API="$5" LL_QUIET=0 LL_STRICT=0 \
-          LL_BASE=selftest LL_BASE_SUB=合成样本 ${6:-} python3 "$PYCORE" 2>&1)
+          LL_BASE=selftest LL_BASE_SUB=合成样本 LL_BASELINE=- ${6:-} python3 "$PYCORE" 2>&1)
     rc=$?
     if [ "$rc" = "$2" ] && printf '%s' "$out" | grep -qF "$3"; then
       printf '  ok    %s → rc=%s 且含「%s」\n' "$1" "$rc" "$3"
@@ -442,6 +537,7 @@ EOF
   run_case "注入：标识符只在否定句里 → 绿，但印原文"   0 "这里**不**采用"          "$D/negation.md" "$D/ok.yaml"
   run_case "注入：空白差异不算未命中（count=0 vs count = 0）" 0 "结论：L1 ok"       "$D/space.md"    "$D/ok.yaml"
   run_case "部分落点未命中：默认档只登记，不判红"     0 "目标级未命中 1 个"        "$D/partial.md"  "$D/ok.yaml"
+  run_case "注入：给了不存在的基线文件 → L5 判 rc=2（未验证不冒充通过）" 2 "ledger_baseline" "$D/ok.md" "$D/ok.yaml" "LL_BASELINE=/tmp/no-such-baseline-$$.txt"
   run_case "同一份在 --strict 下判红（施压档，必须带规则名）" 1 "GATE FAILED: ledger_target_miss" "$D/partial.md" "$D/ok.yaml" "LL_STRICT=1"
 
   # 判据清单与实跑必须是同一份：--list 里声明的 L 编号集合 == 正样本结论行里出现的集合。
@@ -449,8 +545,8 @@ EOF
   total=$((total + 1))
   local listed actual
   listed=$(bash "$0" --list | grep -oE '\[L[0-9]+\]' | tr -d '[]' | LC_ALL=C sort -u | tr '\n' ' ')
-  actual=$(LL_DOC="$D/ok.md" LL_API="$D/ok.yaml" LL_QUIET=0 LL_STRICT=0 LL_BASE=s LL_BASE_SUB=s \
-           python3 "$PYCORE" 2>&1 | grep -oE 'L[0-9]+ ok' | awk '{print $1}' | LC_ALL=C sort -u | tr '\n' ' ')
+  actual=$(LL_DOC="$D/ok.md" LL_API="$D/ok.yaml" LL_QUIET=0 LL_STRICT=0 LL_BASE=s LL_BASE_SUB=s LL_BASELINE=- \
+           python3 "$PYCORE" 2>&1 | sed -e 's/[][]//g' | grep -oE 'L[0-9]+ (ok|skip)' | awk '{print $1}' | LC_ALL=C sort -u | tr '\n' ' ')
   if [ -n "$listed" ] && [ "$listed" = "$actual" ]; then
     printf '  ok    --list 的判据编号与实跑一致 → %s\n' "$listed"
     pass=$((pass + 1))
@@ -475,7 +571,8 @@ EOF
 # ---------------------------------------------------------------------------
 DOC="docs/03-后端设计.md"
 API="openapi/openstore.yaml"
-export LL_QUIET=0 LL_STRICT=0
+BASELINE="scripts/ledger-landing-baseline.txt"
+export LL_QUIET=0 LL_STRICT=0 LL_UPDATE_BASELINE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -485,6 +582,9 @@ while [ $# -gt 0 ]; do
     --openapi=*) API="${1#--openapi=}"; shift ;;
     --quiet)     LL_QUIET=1; shift ;;
     --strict)    LL_STRICT=1; shift ;;
+    --baseline)  BASELINE="${2:-}"; shift 2 ;;
+    --baseline=*) BASELINE="${1#--baseline=}"; shift ;;
+    --update-baseline) LL_UPDATE_BASELINE=1; shift ;;
     --self-test) self_test; exit $? ;;
     *) printf '用法错误：不认识参数 %s（见 --help）\n' "$1" >&2; exit 3 ;;
   esac
