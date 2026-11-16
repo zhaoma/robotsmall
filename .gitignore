@@ -457,3 +457,9 @@ frontend/**/.vite/
 src/OpenStore.Api/openstore.dev.db
 src/OpenStore.Api/openstore.dev.db-shm
 src/OpenStore.Api/openstore.dev.db-wal
+
+# 本地开发数据库（不应入库：每次 migrate/seed 都变，且含开发凭据）
+*.db
+*.db-shm
+*.db-wal
+*.db.bak-*
