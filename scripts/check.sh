@@ -454,7 +454,6 @@ if [ "${goto_summary:-0}" != "1" ]; then
                printf "PRECONDITION: 取不到 HEAD:scripts/soak.sh（不是 git 工作区？）\n"; exit 2; fi
              bash "$tmp/soak.sh" --self-test; rc=$?
              rm -rf "$tmp"; exit $rc'
-fi
 
   # ---- 22 裁决落地核查（台账 → 正文落点）-------------------------------------
   # 它守的是"台账说某裁决落在 §X，而 §X 里根本没提那个名字"——本轮真实存在过
@@ -469,6 +468,7 @@ fi
              cat "$d/out"
              sed -n "s/^结论：/DETAIL: /p" "$d/out"
              rm -rf "$d"; exit $rc'
+fi
 
 # ---- 清单自证：--list 声明 == 实跑处理 -------------------------------------
 # 步数写死连续错过三次（15→16 步时没跟着改、加 17、加 18）。根因不是"忘了改那个数字"：
