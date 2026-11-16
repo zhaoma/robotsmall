@@ -237,6 +237,18 @@ run_matrix(){
   else fail "S5 带 utm 的 canonical 不对" "实际=${P_CAN:-<空>} 期望=$BASE${prodpath}（b3 永不做参数归并）"; fi
   rec "$pu" "$P_NI" "$P_CAN"
 
+  # ---- S5b 非追踪参数必须在 canonical 里被保留 -------------------------------
+  # **为什么这条不能省**：S5 只喂 `?utm_*`，而"只剔命中 TAG 的参数"（正确）与
+  # "剔光所有查询参数"（错）对同一个 utm 请求吐出**逐字相同**的 canonical——
+  # S5 永远不会因为"剔过头"而红。docs/04 的 b3 反例句点名的后果正是
+  # 「变体/来源流量全指向同一页」，所以 C 用 `ref`（非追踪、无业务语义）
+  # 而不是臆造一个 `?variant=`：测的是 spec 已写的那句"**只**剔除追踪参数"。
+  local pref="$BASE$prodpath?ref=abc"
+  probe_chain "$pref"
+  if same "$P_CAN" "$pref"; then pass "S5b 非追踪参数被保留（只剔追踪参数，未剔光）"
+  else fail "S5b canonical 把非追踪参数剔掉了" "实际=${P_CAN:-<空>} 期望=${pref}（只许剔 utm_*/gclid/fbclid/msclkid/yclid；剔光等于把变体/来源流量归并成一页）"; fi
+  rec "$pref" "$P_NI" "$P_CAN"
+
   # ---- S6 站内搜索：noindex,follow + 无 canonical + 不 Disallow
   echo "-- S6 站内搜索 noindex,follow / 无 canonical / 不 Disallow"
   local su="$BASE/$LOCALE/search?q=robot"
@@ -533,7 +545,21 @@ def route(path, q):
             return 404, "text/html", page(""), {}
         return 200, "text/html", page(canon(OOSP) + ld("OutOfStock")), {}
     if path == PRODP:
-        return 200, "text/html", page(canon(PRODP) + ld("InStock")), {}
+        # canonical 规则（b3）：永远自引用，**只剔除追踪参数**（不归并、不剔光）。
+        # v16 注入的正是"剔光所有查询参数"——这是一条只喂 utm 的断言永远抓不到的坏法：
+        # 对 `?utm=…` 请求，正确实现与全剔实现吐出**逐字相同**的 canonical。
+        TAGK = ("gclid", "fbclid", "msclkid", "yclid")
+        if MODE == "v16":
+            keep = ""
+        else:
+            parts = []
+            for k in sorted(q):
+                if k.startswith("utm_") or k in TAGK:
+                    continue
+                for v in q[k]:
+                    parts.append("%s=%s" % (k, v))
+            keep = ("?" + "&".join(parts)) if parts else ""
+        return 200, "text/html", page(canon(PRODP + keep) + ld("InStock")), {}
     if path == CATP:
         if any(k.startswith("f.") for k in q):
             if q.get("page"):
@@ -647,6 +673,7 @@ v7|归档有替代返 200（而非 301）|S9 归档+有替代 未返回 301
 v8|缺 out-of-stock fixture（sitemap 里找不到 OutOfStock 商品）|PRECONDITION
 v9|归档 301 落点 404（Location 指向不存在的分类页）|S9 301 落点不可访问
 v10|归档商品的历史 slug 被 301 到新 slug（301→410 两跳）|S9 历史 slug 不得带 Location
+v16|canonical 剔光所有查询参数（不只剔追踪参数）|S5b canonical
 v11|缺 --archived-gone-from（历史 slug fixture 未给）|PRECONDITION
 v12|缺 --moved-from（改过 slug 的在售商品 fixture 未给）|PRECONDITION
 v13|在售商品的旧 slug 返 404（SlugHistory 未实现或未登记）|S9 规则4 旧 slug 返回 404
