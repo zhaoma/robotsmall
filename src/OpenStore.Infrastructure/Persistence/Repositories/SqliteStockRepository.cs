@@ -223,7 +223,8 @@ public sealed class SqliteStockRepository(StoreDbContext db, IClock clock, int l
                 x.Stock.OnHand,
                 x.Stock.Reserved,
                 x.Stock.Sold,
-                threshold))
+                threshold,
+                x.Stock.UpdatedAt))
             .ToListAsync(ct)
             .ConfigureAwait(false);
 

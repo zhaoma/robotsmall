@@ -12,6 +12,7 @@ namespace OpenStore.Application.Abstractions;
 /// <param name="Reserved">预占。</param>
 /// <param name="Sold">已售未发。</param>
 /// <param name="LowStockThreshold">低库存阈值（来自配置，默认 5）。</param>
+/// <param name="UpdatedAt">最后一次库存变动时间（契约 <c>updatedAt</c>）。</param>
 public sealed record StockOverviewDto(
     Guid VariantId,
     string Sku,
@@ -19,7 +20,8 @@ public sealed record StockOverviewDto(
     int OnHand,
     int Reserved,
     int Sold,
-    int LowStockThreshold)
+    int LowStockThreshold,
+    DateTimeOffset UpdatedAt)
 {
     /// <summary>可用量 = OnHand − Reserved − Sold。<b>计算属性，不落库</b>。</summary>
     public int Available => OnHand - Reserved - Sold;
