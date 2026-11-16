@@ -26,10 +26,11 @@
 #   ./scripts/check-fixture.sh --print-flags         # 打印 verify-seo-matrix.sh 需要的 flag（见下）
 #   ./scripts/check-fixture.sh --quiet               # 只打失败项与总结（给 CI 用）
 #
-# 退出码（与 verify-seo-matrix.sh 同义，别用 `[ $? -le 1 ]` 把未验证当通过）:
-#   0 = 全部通过（唯一通过态）
-#   1 = 有判据失败
-#   2 = 前置条件缺失（缺目录 / 缺 fixture.json / 缺 jq）→ **等价于不通过**
+# 退出码：**含义只在 `docs/05 §4.6` 定义，本文不复述**（全组唯一定义点；今天已经因为四份各自写一遍
+# 而互相矛盾过一次）。这里只留一条**消费侧**的规矩，它不是定义：
+#   **判"通过"只认 0。** 别写 `[ $? -le 1 ]` —— 那会把"未验证"当成"通过"，而这两者在 CI 里
+#   长得一模一样，在报表语义里完全不同（`check.sh` 把未验证记成 `FAILED: fixture` 而不是 `skipped`，
+#   因为 `skipped` 专指"里程碑未实现"，而"判据跑不成"不是没做，是没验）。
 set -uo pipefail
 
 DIR=""
