@@ -70,6 +70,10 @@ COLD=300            # 冷启动阶段时长（秒）。0 = 不跑。默认 300 =
 COLD_RESTART=0      # 1 = 冷启动阶段前真的 restart 容器（否则假定操作者刚起过站）
 KERNEL_MODE=auto    # auto = 采内核日志，采不到就 rc=2；require = 同上但更严；skip = 显式放弃（记 WARN）
 SEED_META=""        # seed-bench 的输出（key=value）。给了就把 fingerprint 写进 META：行数相同不代表同一批数据
+
+# `--self-test` 的分组清单。**它是唯一声明处**：自证里每个 `grp` 都拿它对账，
+# 加了一组却忘了声明会当场红 —— 否则"绿了多大范围"只能靠数 ok 行，而那个数没人维护。
+ST_GROUPS="A1-A8 判定|数据集绑定与质量|跨轮可比性|用法错误"
 PREV_META=""        # 上一轮的 seed 输出。给了就跨轮比 fingerprint：不同则两轮结论不可横向比较
 ARGS=()
 
@@ -106,6 +110,8 @@ while [ $# -gt 0 ]; do
       printf 'A7 cgroup memory.events 的 oom_kill 增量 0\n'
       printf 'A8 TTFB P95 ≤ 上限\n'
       printf '(冷启动阶段 RSS、稳态 RSS 斜率、机器规格与数据量指纹：作为证据输出，不单独设门；见 docs/05 §2.6.1)\n'
+      printf 'self-test 分组（样本条数由 --self-test 末行输出，此处不抄）：\n'
+      printf '  %s\n' "$(printf '%s' "$ST_GROUPS" | tr '|' ' ')"
       printf '(--list 只列"这台机器上现在能跑的判定项"；"该不该有"属文档，两者不混——否则 EXECUTED=PLANNED 会自己变绿)\n'
       exit 0 ;;
     -h|--help)
@@ -356,7 +362,22 @@ self_test() {
     fi
   }
 
+  # 分组：`[group] <名>` 一行，并拿 ST_GROUPS 对账（名字拼错/漏声明都当场红）。
+  # 为什么要有分组标题：`06` 侧把"范围与条数"全部改成指针（"以脚本输出为准"），
+  # 那么"到底绿了多大范围"就必须能从这份输出里直接读出来，否则那句指针是空指针。
+  local gcount=0 gdecl=""
+  gdecl=$(printf '%s' "$ST_GROUPS" | awk -F'|' '{print NF}')
+  grp() {
+    case "|$ST_GROUPS|" in
+      *"|$1|"*) : ;;
+      *) printf '  WRONG 未在 ST_GROUPS 里声明的分组：%s\n' "$1"; failn=$((failn+1)) ;;
+    esac
+    gcount=$((gcount+1))
+    printf '[group] %s\n' "$1"
+  }
+
   say "== soak.sh 判定逻辑自证（合成样本，不连站、不需要 docker）"
+  grp "A1-A8 判定"
 
   # 1) 正确样本：全绿
   gen_csv  "$TMPD/c1" 700 300 70; gen_req "$TMPD/r1" 200 200 0.12
@@ -403,6 +424,7 @@ self_test() {
   printf 'kern: [12345.678] Out of memory: Killed process 4242 (dotnet) total-vm:1234567kB\n' > "$TMPD/k11"
   run_case "内核日志记录 OOM（cgroup 计数仍为 0）" "A7" "$TMPD/c1" "$TMPD/r1" "$TMPD/i1" "$TMPD/e1" "$TMPD/k11"
 
+  grp "数据集绑定与质量"
   # ---- seed-meta 解析：键名对不上必须红，而且必须**在加压前**红 ----
   # 这一组的来历：本脚本第一版按 `per_category` 取值，造数器打的是
   # `spec_products_per_category`，于是 META 里那行恒为空 —— 一个"总是成功、从不生效"的守卫。
@@ -461,12 +483,6 @@ self_test() {
   ( SEED_META="$TMPD/不存在的文件"; load_seed_meta >/dev/null 2>&1 ) ; mt "seed-meta 文件不存在 → rc=2" "2" "$?"
   ( SEED_META=""; load_seed_meta >/dev/null 2>&1 ) ; mt "seed-meta 未给 → rc=0（不算错，META 里写明原因）" "0" "$?"
 
-  # 用法错误（rc=3）：上面所有样本都跑在函数内，碰不到参数解析，只有真起进程才验得到。
-  # 断言"正好 3"而不是"非零"：非零里还有 1（真失败）和 2（没测成），
-  # 混在一起就分不清"命令敲错"和"性能不达标"。
-  bash "$0" --definitely-not-an-arg >/dev/null 2>&1
-  mt "不认识参数 → rc=3（用法错误，与 1/2 区分开）" "3" "$?"
-
   # ---- verdict：造数器自己已经判过了，不要替它再判一遍 ----
   # 这一组的存在理由：**行数够不代表数据能用**。造数器会打印
   # `verdict=OK 造满了（…）` / `verdict=FAILED 造不满：行数 != 规格…`，它是唯一知道
@@ -495,6 +511,14 @@ self_test() {
      "slug-segment（M0 无 ProductCategory 表；只证明列表数据量，不证明分类 join 成本）" \
      "$(seed_get "$TMPD/m-vd-ok" category_check_scope)"
 
+  grp "用法错误"
+  # 用法错误（rc=3）：上面所有样本都跑在函数内，碰不到参数解析，只有真起进程才验得到。
+  # 断言"正好 3"而不是"非零"：非零里还有 1（真失败）和 2（没测成），
+  # 混在一起就分不清"命令敲错"和"性能不达标"。
+  bash "$0" --definitely-not-an-arg >/dev/null 2>&1
+  mt "不认识参数 → rc=3（用法错误，与 1/2 区分开）" "3" "$?"
+
+  grp "跨轮可比性"
   # ---- 跨轮可比性：两轮指纹不同必须**说出来**，不能让人自己比 ----
   # 这组防的是"两个 META 各自都完整、指纹却不同"：报告上没有任何异常，
   # 而 RSS 斜率一涨就会被读成泄漏，真实原因是中间换过数据集。
@@ -517,10 +541,14 @@ self_test() {
   mt "可比文案不出现 INCOMPARABLE（否则每次都喊狼来了）" "no" "$(has "$LINE_YES" INCOMPARABLE)"
 
   say ""
+  # 分组数与声明数对账：加组忘声明、或声明了没跑，都在这里红。
+  mt "自证分组数与 --list 声明一致（声明 ${gdecl} 组）" "$gdecl" "$gcount"
   if [ "$failn" -eq 0 ]; then
+    say "groups=${gcount} samples=${total}"
     say "== 自证通过：${total} 个样本，正确样本绿、每种坏情况各自红在预期断言上 =="
     return 0
   fi
+  say "groups=${gcount} samples=${total}"
   say "== 自证失败：${failn}/${total} 个样本没有红在预期断言上 =="
   say "  判定器本身不可信 —— 此时它给出的 PASS 不能作为 AC-12 的证据。"
   return 1
@@ -726,9 +754,35 @@ main() {
 
   # 压测库里**数出来**的行数。它与 seed-bench 声称的 products 是两回事：
   # 前者是"我现在压的东西"，后者是"造数器以为我压的东西"。两者不等 = 压错库。
-  local DB_SKU DB_ORD
+  # 压测库里**数出来**的行数。它与 seed-bench 声称的 products 是两回事：
+  # 前者是"我现在压的东西"，后者是"造数器以为我压的东西"。两者不等 = 压错库。
+  local DB_SKU DB_ORD DB_SKU_TEXT DB_ORD_TEXT ORD_TBL
   DB_SKU=$(docker compose exec -T api sqlite3 /data/openstore.db "select count(*) from Product;" 2>/dev/null | tr -d ' \r')
-  DB_ORD=$(docker compose exec -T api sqlite3 /data/openstore.db "select count(*) from Order;" 2>/dev/null | tr -d ' \r')
+  case "$DB_SKU" in
+    ''|*[!0-9]*) DB_SKU_TEXT="ERROR(计数失败或容器内没装 sqlite3)" ;;
+    *)           DB_SKU_TEXT="$DB_SKU" ;;
+  esac
+
+  # ---- Order 这一格踩过一个"结果对、原因错"的坑，别退回去 ----
+  # 第一版写的是 `select count(*) from Order`。**ORDER 是 SQL 保留字**，不加引号是
+  # **语法错**；而 "no such table: Order" 是**表不存在** —— 两种错在 `2>/dev/null`
+  # 下完全不可区分，都变成空串，再由 `${VAR:-?}` 变成 `?`。
+  # 于是：M0（根本没有 Order 表，DbContext 只有 Product/ProductVariant/AdminUser/Session）
+  # 显示 `?` 是对的，但原因是错的；**M1 建好表那天它照样是 `?`**，而人会以为
+  # "表没建"或"库没起"，排查方向从头就错 —— 与 `--no-run --no-build` 跑旧产物同一个病：
+  # 因为结果看着"合理"，所以没人去查。
+  # 现在先探 sqlite_master 再数行，把三种情况拆成三个**不同的值**（它们该走不同处置）。
+  ORD_TBL=$(docker compose exec -T api sqlite3 /data/openstore.db \
+    "select count(*) from sqlite_master where type='table' and name='Order';" 2>/dev/null | tr -d ' \r')
+  case "$ORD_TBL" in
+    1) DB_ORD=$(docker compose exec -T api sqlite3 /data/openstore.db 'select count(*) from "Order";' 2>/dev/null | tr -d ' \r')
+       case "$DB_ORD" in
+         ''|*[!0-9]*) DB_ORD_TEXT="ERROR(表在但计数失败)" ;;
+         *)           DB_ORD_TEXT="$DB_ORD" ;;
+       esac ;;
+    0) DB_ORD=""; DB_ORD_TEXT="n/a(表未建)" ;;   # M0 的事实；**不要填 0**：0 的语义是"查了，确实 0 行"
+    *) DB_ORD=""; DB_ORD_TEXT="ERROR(探表失败)" ;;
+  esac
 
   # ---- 规格与数据量指纹：结论必须能和"在什么机器、多少数据上跑"绑定 ----
   # 不带指纹的压测结论无法比较：同一份脚本在 8 核开发机与 2C2G 上跑，绿的含金量完全不同。
@@ -742,12 +796,18 @@ main() {
     printf 'mem_total=%s\n' "$( (awk '/MemTotal/{printf "%.1fG", $2/1048576}' /proc/meminfo 2>/dev/null) || echo '?' )"
     printf 'rss_budget_mb=%s ttfb_p95_ms=%s\n' "$RSS_BUDGET_MB" "$TTFB_P95_MS"
     printf 'duration_s=%s interval_s=%s conc=%s cold_s=%s\n' "$DUR" "$INTERVAL" "$CONC" "$COLD"
-    printf 'db_products=%s db_orders=%s\n' "${DB_SKU:-?}" "${DB_ORD:-?}"
+    # n/a 与 ERROR 都不许参与任何数值判定（对账只看 DB_SKU，它只认纯数字）：
+    # 把这三态揉回一个 `?`，等于把刚刚拆开的信息又扔掉。
+    printf 'db_products=%s db_orders=%s\n' "$DB_SKU_TEXT" "$DB_ORD_TEXT"
     if [ -n "$SEED_META" ]; then
       printf 'seed_version=%s\n' "$SM_VERSION"
       printf 'seed_products=%s seed_variants=%s seed_products_per_category=%s\n' "$SM_PRODUCTS" "$SM_VARIANTS" "$SM_PPC"
       printf 'seed_fingerprint=%s\n' "$SM_FP"
-      printf 'seed_verdict=%s\n' "$SM_VERDICT"
+      # seed_verdict 只放**第一个词**（OK / FAILED），机器可读、不含空格与 '='；
+      # 原文另放 seed_verdict_text。理由：META 会被 `cut -d= -f2` 这类最省事的写法读，
+      # 而造数器的原文是 `OK 造满了（行数 = 规格，每分类 = 规格）` —— 里面自带 '='。
+      printf 'seed_verdict=%s\n' "$(printf '%s' "$SM_VERDICT" | awk '{print $1}')"
+      printf 'seed_verdict_text=%s\n' "$SM_VERDICT"
       printf 'seed_quality=wrong_variant_count=%s duplicate_axis_signatures=%s\n' "${SM_BADVAR:-?}" "${SM_BADAXIS:-?}"
       # 「每分类 500」只证明列表数据量。原样抄，不要改写 —— 下游读的是这句话本身。
       if [ -n "$SM_SCOPE" ]; then
