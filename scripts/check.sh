@@ -223,7 +223,15 @@ run_step() {
   EXECUTED_NUMS="$EXECUTED_NUMS$no "
   printf '[%2s] %-20s ' "$no" "$name"
   if "$@" >"$log" 2>&1; then
-    printf 'ok\n'
+    # 明细后缀：步骤可以在输出里打一行 `DETAIL: …`，这里把它提到 OK 同一行。
+    # **为什么要有它**：判据的价值常常在"检查了 47 个"这种数量上（0 个和 47 个
+    # 都是绿），但 `run_step` 只在失败时回放日志 —— 于是判据把话印出来，绿的
+    # 时候没人看得到，判据等于白设计。同 `soak.sh 来源 = HEAD:<sha>`：**锚必须
+    # 出现在绿的路径上**，只在失败时显示的锚等于没有锚。
+    local detail
+    detail=$(sed -n 's/^DETAIL: //p' "$log" 2>/dev/null | head -1)
+    if [ -n "${detail:-}" ]; then printf 'ok（%s）\n' "$detail"
+    else printf 'ok\n'; fi
     PASS=$((PASS+1))
   else
     printf 'FAIL\n'
@@ -277,6 +285,7 @@ if [ "$MODE" = "list" ]; then
   step 19 doc_anchors         "脚本引用的 docs/NN §节号必须真实存在"
   step 20 fixture             "AC-14a 验收 fixture 声明侧判据（不连库、不依赖 .NET）"
   step 21 soak_self_test      "压测判定逻辑自证（跑 HEAD 版：验的是提交后的状态）"
+  step 22 ledger_landing      "台账裁决的落点在正文里真的提过（L1~L5，含棘轮）"
   exit 0
 fi
 
@@ -446,6 +455,20 @@ if [ "${goto_summary:-0}" != "1" ]; then
              bash "$tmp/soak.sh" --self-test; rc=$?
              rm -rf "$tmp"; exit $rc'
 fi
+
+  # ---- 22 裁决落地核查（台账 → 正文落点）-------------------------------------
+  # 它守的是"台账说某裁决落在 §X，而 §X 里根本没提那个名字"——本轮真实存在过
+  # （`CanSellConsistencyJob` 只在 §7 任务表出现，顺着 §2.7 找不到它）。
+  # **它的绿只能支撑"提过"，不能支撑"说的是那个意思"**：语义相反 / 号过期 /
+  # 跨文件互斥这三类它一条都挡不住，脚本每次运行末尾会自己把这句印出来。
+  # 结论行以 `DETAIL:` 回给 run_step，绿的时候也让人看见"核了多少行"。
+  run_step 22 ledger_landing "台账裁决的落点真的提过（L1~L5）" \
+    bash -c 'd=$(mktemp -d) || exit 2
+             ./scripts/check-ledger-landing.sh --self-test >/dev/null || exit $?
+             ./scripts/check-ledger-landing.sh > "$d/out" 2>&1; rc=$?
+             cat "$d/out"
+             sed -n "s/^结论：/DETAIL: /p" "$d/out"
+             rm -rf "$d"; exit $rc'
 
 # ---- 清单自证：--list 声明 == 实跑处理 -------------------------------------
 # 步数写死连续错过三次（15→16 步时没跟着改、加 17、加 18）。根因不是"忘了改那个数字"：
