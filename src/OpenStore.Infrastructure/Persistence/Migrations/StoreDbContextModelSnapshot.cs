@@ -72,6 +72,147 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                     b.ToTable("AdminUser", (string)null);
                 });
 
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.CategoryRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("AttributeSetId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Depth")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("ParentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Path")
+                        .HasDatabaseName("IX_Category_Path");
+
+                    b.HasIndex("ParentId", "SortOrder")
+                        .HasDatabaseName("IX_Category_Parent_Sort");
+
+                    b.ToTable("Category", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Category_Depth", "\"Depth\" >= 0 AND \"Depth\" <= 5");
+                        });
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.CategoryTranslationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("CategoryId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Locale")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SeoDescription")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SeoTitle")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CategoryId", "Locale")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CategoryTranslation_Category_Locale");
+
+                    b.HasIndex("Locale", "Slug")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CategoryTranslation_Locale_Slug");
+
+                    b.ToTable("CategoryTranslation", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductCategoryRecord", b =>
+                {
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("CategoryId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsPrimary")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("ProductId", "CategoryId");
+
+                    b.HasIndex("ProductId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ProductCategory_PrimaryPerProduct")
+                        .HasFilter("\"IsPrimary\" = 1");
+
+                    b.HasIndex("CategoryId", "ProductId")
+                        .HasDatabaseName("IX_ProductCategory_Category_Product");
+
+                    b.ToTable("ProductCategory", (string)null);
+                });
+
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -98,6 +239,63 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_Product_Slug");
 
                     b.ToTable("Product", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductTranslationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Locale")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SeoDescription")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SeoTitle")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ShortDescription")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Locale", "Slug")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ProductTranslation_Locale_Slug");
+
+                    b.HasIndex("ProductId", "Locale")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ProductTranslation_Product_Locale");
+
+                    b.ToTable("ProductTranslation", (string)null);
                 });
 
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductVariantRecord", b =>
@@ -188,6 +386,47 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_Session_Actor");
 
                     b.ToTable("Session", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.CategoryRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.CategoryRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ParentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.CategoryTranslationRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.CategoryRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductCategoryRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.CategoryRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductTranslationRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductVariantRecord", b =>
