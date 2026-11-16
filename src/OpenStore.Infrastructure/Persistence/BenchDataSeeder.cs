@@ -249,8 +249,12 @@ public static class BenchDataSeeder
             problems.Add($"{duplicateAxis} 组 (ProductId, AxisSignature) 重复（唯一索引没生效）");
         }
 
-        // 分类分布：M0 物理表还没有 Category / ProductCategory（M1 才落），
-        // 所以分类归属暂由 slug 的 `bench-cNN-` 段表达。
+        // 分类分布：Category / ProductCategory **两张表已经建了**（`M1_Catalog` 迁移），
+        // 缺口不在表，在写入路径 —— 本文件只写 `Product` / `ProductVariant`，
+        // 所以 bench 库的 `ProductCategory` 是空的，分类归属暂由 slug 的 `bench-cNN-` 段表达。
+        // （这句话原来写的是"M0 物理表还没有 Category / ProductCategory"，建表那天就成了假话；
+        //   两种原因的到期日不同：等别人 vs 今天就能干。改代码注释比改文档更急，
+        //   因为读代码的人不会再去核对一遍文档。）
         //
         // ⚠️ **这只证明"列表数据量"，不证明"分类 join 成本"。** 报告里必须成对出现，
         // 否则"每分类 500 ✅"会被当成"分类页指标已达标"用（见 docs/06 §4.1 的缺口表）。
@@ -259,8 +263,11 @@ public static class BenchDataSeeder
         // slug 在 ProductTranslation 上且唯一索引是 (Locale, Slug) —— 同一个商品在不同语种
         // 可以有不同 slug。所以 slug 段只在**默认语种那一行**成立，拿它做跨语种分类 key 会错；
         // 而分类重新归属时 slug 不会变，LIKE 会静默给出**错**的分类，那恰恰是 AC-12 要量的东西。
+        // 而且那时旧判据**也还是绿的**（生成与校验同时按位置走），只有 join 出来的结果不同 ——
+        // 所以迁移是"删掉旧判据"，不是"顺手多加一条"。
         // 迁移形态：先建 Category，再为每个商品建恰好一行 ProductCategory(IsPrimary=true)，
-        // 此处改为 join 计数；slug 段只作一次性回填依据。
+        // 此处改为 join 计数；slug 段只作一次性回填依据，且回填必须**按 Category.Key 查**
+        // （段里的数字是数组下标，不是 Category.Index —— 两者今天相等只是因为 Shape 按 Index 升序写）。
         for (var c = 0; c < spec.Categories.Count; c++)
         {
             var prefix = CategorySlugPrefix(c);
