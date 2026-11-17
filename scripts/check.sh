@@ -373,6 +373,30 @@ skip_step() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# 第 7 步 M1 集成测的包装。三件事，每一件都对应一个实测踩过的坑：
+#  ① 退出码归一：测试把前置缺失抛成带 `PRECONDITION:` 标记的错误；本函数把它映射成
+#     rc=2（未验证，docs/05 §4.6），否则会混成 rc=1（真失败）。env 不可用时不能报"失败"。
+#  ② DETAIL 前导空格：xUnit 的 ITestOutputHelper 在 detailed 模式下把输出缩进一个空格
+#     （实测字节 `20 44 45 54 41 49 4c`），而 join_detail 只认行首 `^DETAIL:`。不剥这个
+#     空格，测试绿了汇总里也不显示锚行 —— "跑了没人看见"与"没跑"同形。
+#  ③ 不吞退出码：用临时文件捕获输出而非管道，pipefail 在这里用不上；原样回传 dotnet 的
+#     rc（0=绿，非0=红），只有检测到 PRECONDITION: 才覆成 2。
+run_m1_integration() {
+  local out rc
+  out=$(mktemp "${TMPDIR:-/tmp}/m1-it.XXXXXX") || return 2
+  dotnet test tests/OpenStore.IntegrationTests --no-build --nologo \
+    --filter "Category=M1" --logger "console;verbosity=detailed" >"$out" 2>&1
+  rc=$?
+  # 无论绿红都把 DETAIL 行剥掉前导空格写回 stdout：绿时 run_step 回放它当锚，
+  # 红时它留在日志尾部帮助定位。
+  sed 's/^ DETAIL:/DETAIL:/' "$out"
+  if grep -q 'PRECONDITION:' "$out"; then
+    rc=2
+  fi
+  rm -f "$out"
+  return "$rc"
+}
+
 echo "== OpenStore 门禁 (mode=$MODE) =="
 echo
 
@@ -383,7 +407,7 @@ if [ "$MODE" = "list" ]; then
   step  4 authorization       "每个 /api/admin 端点都有 perm:* 策略"
   step  5 storefront_dto      "前台 DTO 不含内部字段"
   step  6 domain_tests        "领域单测（无 DB）"
-  step  7 integration_tests   "集成测（双 provider）"
+  step  7 integration_tests   "集成测（SQLite；M1 最低正价；第二 provider 未覆盖）"
   step  8 migrations          "模型与迁移一致"
   step  9 templates           "行业模板 schema + 引用完整性"
   step 10 themes              "主题 manifest + token 单一真源"
@@ -439,6 +463,15 @@ run_step 5 storefront_dto "前台数据隔离" \
 run_step 6 domain_tests "领域单测" \
   dotnet test tests/OpenStore.Domain.Tests --no-build --nologo --logger "console;verbosity=detailed"
 
+# ---- 7 M1 最低正价集成测 ----------------------------------------------------
+# 为什么在 fast 截止线**之前**：CI 上 PR 只跑 fast（.github/workflows/gates.yml），default
+# 在合并后才跑。放在截止线后 = 这条判据在 PR 上永远不跑，失败只在合并后暴露 —— 正是
+# 第 24 步要治的"孤儿判据"。所以必须在这里真跑，不是翻后面的 skip_step 就行。
+# 前置：OpenStore.IntegrationTests 已在 OpenStore.sln（step 1 构建覆盖，故可 --no-build）；
+# 临时 SQLite 每实例 GUID 隔离、结束清理；鉴权走真实 login + CSRF，未全局关闭。
+run_step 7 integration_tests "M1 最低正价集成测" \
+  run_m1_integration
+
 # fixture 判据只读 tests/fixtures/*.json，1.7s、零依赖。**放在 fast 收口之前**：
 # 改数据文件而不跑代码测试是最常见的操作，若它只在 full 档跑，改数据的人 push 完就结束了。
 # 它的 --self-test（约 29s，17 条注入逐条必须变红）只在 full 档跑 —— 塞进 fast 会把
@@ -449,13 +482,11 @@ if [ "$MODE" = "fast" ]; then
   echo; echo "== --fast 到此为止 =="; goto_summary=1
 fi
 
-# ---- 7 集成测 ---------------------------------------------------------------
+# ---- 8 及以后：只在非 fast 档跑 --------------------------------------------
+# 第 7 步已移到 fast 截止线之前（见上），这个外壳现在只管第 8 步及以后。
 if [ "${goto_summary:-0}" = "1" ]; then
   :
 else
-  # M0 尚未有集成测项目；--full 下判红，避免"没有测试 = 通过"
-  skip_step 7 integration_tests "M1 引入（需 DB/HTTP）"
-
   # ---- 8 迁移漂移 -----------------------------------------------------------
   if have dotnet-ef; then
     run_step 8 migrations "迁移漂移" \
