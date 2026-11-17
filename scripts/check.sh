@@ -5,8 +5,14 @@
 # 用法：
 #   ./scripts/check.sh            # 跑当前里程碑已实现的全部步骤
 #   ./scripts/check.sh --full     # 跑全部步骤（含未实现的，未实现即判红；步数以 --list 为准，本行不写数字）
-#   ./scripts/check.sh --fast     # 提交前档：1~6 步 + fixture 声明侧判据 + 门禁自证（目标 < 90 秒）
+#   ./scripts/check.sh --fast     # 提交前档：build / layering / bounded_contexts / authorization /
+#                                 #   storefront_dto / domain_tests / integration_tests + fixture
+#                                 #   + gate_self_test + seo_tc_coverage（目标 < 90 秒）
 #                                 #   —— **不列序号**：序号跳过、名字不跳；写死序号的那句话已经错过三次
+#                                 #   （最近一次：integration_tests 翻真跑后，"1~6 步"立刻过期）。
+#                                 #   两件容易再次写错的事：① 末三步 fixture/gate_self_test/seo_tc_coverage
+#                                 #   刻意放在 goto_summary 跳跃**之后**，PR 档也跑，别写成"只在 full 档"；
+#                                 #   ② 可对账的读数：--fast 的 passed 应等于上面列出的名字条数，实测 10。
 #   ./scripts/check.sh --list     # 只列步骤，不执行
 #
 # 退出码：见 `docs/05 §4.6`（0 通过 / 1 失败 / 2 未验证 / 3 用法错误 的**定义只在那里**，
