@@ -436,6 +436,15 @@ frontend/**/build/
 frontend/**/dist/
 frontend/**/.vite/
 
+# 前面第 230 行的 VS NuGet 模板规则 `**/[Pp]ackages/*` 会把 frontend/packages 下的
+# 三个源码包（ui / sdk / i18n）当成 NuGet 目录一并忽略 —— 那不是包产物，是前端源码。
+# 不修则干净 clone 后 `pnpm build` 直接失败（缺整个组件库与 SDK），而且本地开发毫无感知。
+# 否定规则必须写在此处（在 `**/[Pp]ackages/*` 之后）才生效，且要先恢复目录再恢复内容：
+# 只写 `!frontend/packages/**` 无效 —— 父目录被排除时 git 不会进入它。
+!frontend/packages/
+!frontend/packages/*
+!frontend/packages/**
+
 # macOS 目录元数据
 .DS_Store
 

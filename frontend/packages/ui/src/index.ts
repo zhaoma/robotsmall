@@ -1,0 +1,26 @@
+// @openstore/ui 表现原语（源码分发，无构建产物）。
+// 组件只依赖统一色板 token（--color-* / --font-* / --radius-* / --space-* / --focus-ring），禁止硬编码色值。
+
+export { default as Button } from './components/Button.svelte'
+export { default as Input } from './components/Input.svelte'
+export { default as Textarea } from './components/Textarea.svelte'
+export { default as Select } from './components/Select.svelte'
+export type { SelectOption } from './components/Select.svelte'
+export { default as Field } from './components/Field.svelte'
+export { default as Fieldset } from './components/Fieldset.svelte'
+export { default as Badge } from './components/Badge.svelte'
+export type { BadgeTone } from './components/Badge.svelte'
+export { default as Table } from './components/Table.svelte'
+export type { TableColumn } from './components/Table.svelte'
+export { default as Pagination } from './components/Pagination.svelte'
+export { default as Modal } from './components/Modal.svelte'
+export { default as EmptyState } from './components/EmptyState.svelte'
+export { default as Skeleton } from './components/Skeleton.svelte'
+export { default as Tabs } from './components/Tabs.svelte'
+export type { TabItem } from './components/Tabs.svelte'
+export { default as Switch } from './components/Switch.svelte'
+export { default as FormActions } from './components/FormActions.svelte'
+export { default as ToastRegion } from './components/ToastRegion.svelte'
+
+export { toast, dismissToast } from './toast.svelte.js'
+export type { ToastKind } from './toast.svelte.js'

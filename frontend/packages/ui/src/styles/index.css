@@ -1,0 +1,187 @@
+/**
+ * 三端统一色板 —— 唯一允许出现具体色值的地方。
+ *
+ * 规则（前端设计 §6.1）：所有组件 `<style>` 只允许消费 `--color-*` `--font-*`
+ * `--radius-*` `--space-*` `--focus-ring` 这些 token 变量，禁止在组件内写死色值。
+ * 基础值对齐 themes/base/tokens.json（现有主题默认色）。
+ */
+:root {
+  /* 字体 */
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* 中性色（对齐 themes/base/tokens.json） */
+  --color-bg: #ffffff;
+  --color-surface: #f6f7f9;
+  --color-surface-raised: #ffffff;
+  --color-fg: #111827;
+  --color-muted: #6b7280;
+  --color-subtle: #9aa3af;
+  --color-border: #e5e7eb;
+  --color-border-strong: #d1d5db;
+
+  /* 品牌色 */
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-primary-active: #1e40af;
+  --color-primary-fg: #ffffff;
+  --color-primary-soft: #eef2ff;
+
+  /* 语义色 */
+  --color-success: #15803d;
+  --color-success-bg: #eaf6ee;
+  --color-warning: #b45309;
+  --color-warning-bg: #fdf3e3;
+  --color-danger: #dc2626;
+  --color-danger-hover: #b91c1c;
+  --color-danger-fg: #ffffff;
+  --color-danger-bg: #fdeaea;
+  --color-info: #1d6fd1;
+  --color-info-bg: #e8f1fc;
+
+  /* 焦点环（前端设计 §10.1：:focus-visible 才显示） */
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--color-primary) 40%, transparent);
+
+  /* 圆角 */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* 间距 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* 层级 */
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal: 300;
+  --z-toast: 400;
+
+  /* 阴影（只引 token，不硬编码灰值） */
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--color-fg) 6%, transparent);
+  --shadow-md: 0 4px 12px color-mix(in srgb, var(--color-fg) 8%, transparent);
+  --shadow-lg: 0 12px 32px color-mix(in srgb, var(--color-fg) 12%, transparent);
+
+  color-scheme: light;
+}
+
+/**
+ * ── 管理端 v3「工作台」语义层 ──
+ * 全部由上面的基础 token 混出，不引入新的独立色值。
+ * 组件只消费这里，不反向引用基础值；要改主题只改这一段。
+ */
+:root {
+  /* 三层表面：默认 / 抬起 / 下沉 */
+  --color-surface-sunken: color-mix(in srgb, var(--color-fg) 3%, var(--color-bg));
+
+  /* 交互态 */
+  --color-hover: color-mix(in srgb, var(--color-fg) 4%, transparent);
+  --color-selected: color-mix(in srgb, var(--color-primary) 7%, transparent);
+  --color-track: color-mix(in srgb, var(--color-fg) 10%, transparent);
+  --color-neutral-bg: color-mix(in srgb, var(--color-fg) 6%, transparent);
+  --color-neutral-fg: color-mix(in srgb, var(--color-fg) 62%, transparent);
+
+  /* 语义色第三件：描边（pill 才有边界，而不只是色块） */
+  --color-success-border: color-mix(in srgb, var(--color-success) 18%, transparent);
+  --color-warning-border: color-mix(in srgb, var(--color-warning) 22%, transparent);
+  --color-danger-border: color-mix(in srgb, var(--color-danger) 20%, transparent);
+  --color-info-border: color-mix(in srgb, var(--color-info) 20%, transparent);
+  --color-primary-border: color-mix(in srgb, var(--color-primary) 22%, transparent);
+
+  /* 左侧图标轨（深色外壳，与内容区分层） */
+  --color-rail-bg: color-mix(in srgb, var(--color-fg) 96%, var(--color-primary));
+  --color-rail-fg: color-mix(in srgb, var(--color-primary-fg) 52%, var(--color-rail-bg));
+  --color-rail-fg-active: var(--color-primary-fg);
+  --color-rail-hover: color-mix(in srgb, var(--color-primary-fg) 9%, transparent);
+  --color-rail-active: color-mix(in srgb, var(--color-primary-fg) 13%, transparent);
+  --color-rail-divider: color-mix(in srgb, var(--color-primary-fg) 14%, transparent);
+
+  /* 字号尺度（管理端信息密度高，需要比 14px 更细的分级） */
+  --text-2xs: 0.65625rem; /* 10.5px 小标签 / 眉标 */
+  --text-xs: 0.71875rem; /* 11.5px 次要数值 */
+  --text-sm: 0.78125rem; /* 12.5px 表体 */
+  --text-base: 0.8125rem; /* 13px 正文 */
+  --text-md: 0.84375rem; /* 13.5px 面板标题 */
+  --text-lg: 0.9375rem; /* 15px */
+  --text-xl: 1.3125rem; /* 21px 页面标题 */
+  --text-2xl: 1.5625rem; /* 25px 指标数值 */
+
+  /* 字距（大字号收紧，小字号放开，视觉重量才一致） */
+  --tracking-tight: -0.022em;
+  --tracking-wide: 0.07em;
+
+  /* 浮层阴影：只有真正浮起来的东西（面板/弹层）才用 */
+  --shadow-pop: 0 16px 48px color-mix(in srgb, var(--color-fg) 18%, transparent),
+    0 2px 8px color-mix(in srgb, var(--color-fg) 8%, transparent);
+
+  /* 布局尺寸 */
+  --rail-w: 60px;
+  --col-w: 228px;
+  --insp-w: 388px;
+  --topbar-h: 52px;
+  --row-h: 56px;
+}
+
+/* 密度：紧凑档只改行高与纵向内边距，不改字号（避免表格跳版） */
+:root,
+[data-density='comfortable'] {
+  --row-h: 56px;
+  --cell-py: 0px;
+}
+[data-density='compact'] {
+  --row-h: 44px;
+  --cell-py: 0px;
+}
+
+/**
+ * ── 深色主题 ──
+ * 由 <html data-theme="dark"> 激活；只覆盖基础 token，语义层自动跟随。
+ */
+[data-theme='dark'] {
+  --color-bg: #0d1117;
+  --color-surface: #131a23;
+  --color-surface-raised: #182029;
+  --color-surface-sunken: #0a0e13;
+  --color-fg: #e6eaf0;
+  --color-muted: #9aa3af;
+  --color-subtle: #6b7480;
+  --color-border: #232c37;
+  --color-border-strong: #313c4a;
+
+  --color-primary: #3b82f6;
+  --color-primary-hover: #2f74e8;
+  --color-primary-active: #2563eb;
+  --color-primary-soft: #16233a;
+
+  --color-success: #4ade80;
+  --color-success-bg: #12261a;
+  --color-warning: #fbbf24;
+  --color-warning-bg: #2a2110;
+  --color-danger: #f87171;
+  --color-danger-bg: #2a1414;
+  --color-info: #60a5fa;
+  --color-info-bg: #12233a;
+
+  /* 深色下 hover / 选中 / 轨道不能再叠黑色，改为叠白 */
+  --color-hover: color-mix(in srgb, #ffffff 5%, transparent);
+  --color-selected: color-mix(in srgb, var(--color-primary) 16%, transparent);
+  --color-track: color-mix(in srgb, #ffffff 13%, transparent);
+  --color-neutral-bg: color-mix(in srgb, #ffffff 8%, transparent);
+  --color-neutral-fg: #98a1ac;
+
+  --color-rail-bg: #080b10;
+  --color-rail-fg: #7c8695;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 45%);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 55%);
+  --shadow-pop: 0 16px 48px rgb(0 0 0 / 60%), 0 2px 8px rgb(0 0 0 / 40%);
+
+  color-scheme: dark;
+}

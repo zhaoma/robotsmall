@@ -1,0 +1,157 @@
+{
+  "common": {
+    "action": {
+      "save": "Save",
+      "cancel": "Cancel",
+      "delete": "Delete",
+      "edit": "Edit",
+      "create": "Create",
+      "back": "Back",
+      "search": "Search",
+      "reset": "Reset",
+      "retry": "Retry",
+      "confirm": "Confirm",
+      "close": "Close",
+      "refresh": "Refresh",
+      "apply": "Apply",
+      "signOut": "Sign out"
+    },
+    "state": {
+      "loading": "Loading…",
+      "empty": "No data",
+      "error": "Something went wrong",
+      "saving": "Saving…",
+      "notFound": "Not found"
+    },
+    "pagination": {
+      "of": "of",
+      "items": "items",
+      "perPage": "per page",
+      "page": "Page"
+    },
+    "placeholder": {
+      "notImplemented": "Module not implemented yet",
+      "comingSoon": "This module will be implemented in a later milestone"
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "Admin sign in",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Sign in",
+      "failed": "Invalid email or password",
+      "locked": "Too many attempts, try again later"
+    },
+    "sessionExpired": "Session expired, please sign in again"
+  },
+  "admin": {
+    "nav": {
+      "dashboard": "Dashboard",
+      "products": "Products",
+      "categories": "Categories",
+      "attributes": "Attributes",
+      "inventory": "Inventory",
+      "orders": "Orders",
+      "returns": "Returns",
+      "customers": "Customers",
+      "content": "Content",
+      "themes": "Themes",
+      "pages": "Pages",
+      "i18n": "Translations",
+      "uiTexts": "UI texts",
+      "contentTranslations": "Content",
+      "coverage": "Coverage",
+      "settings": "Settings",
+      "users": "Admins",
+      "audit": "Audit log",
+      "catalog": "Catalog",
+      "productList": "Products",
+      "trade": "Trade",
+      "system": "System"
+    },
+    "dashboard": {
+      "title": "Dashboard",
+      "todayOrders": "Orders today",
+      "pendingShipment": "Awaiting shipment",
+      "pendingRefund": "Awaiting refund",
+      "lowStock": "Low stock",
+      "translationCoverage": "Translation coverage",
+      "demoBanner": "Demo mode: checkout is disabled",
+      "nextSteps": "Next steps",
+      "pendingBackend": "Pending backend",
+      "stepPayment": "Configure a payment channel",
+      "stepShipping": "Configure shipping rates",
+      "stepProducts": "Add real products"
+    },
+    "products": {
+      "title": "Products",
+      "new": "New product",
+      "edit": "Edit product",
+      "slug": "Slug",
+      "titleLabel": "Title",
+      "status": "Status",
+      "draft": "Draft",
+      "active": "Active",
+      "archived": "Archived",
+      "variants": "Variants",
+      "variantCount": "Variants",
+      "stock": "On hand",
+      "updatedAt": "Updated",
+      "search": "Search products",
+      "batchActivate": "Activate selected",
+      "batchArchive": "Archive selected",
+      "sku": "SKU",
+      "price": "Price",
+      "basic": "Basic",
+      "images": "Images",
+      "attributesTab": "Attributes",
+      "seo": "SEO",
+      "description": "Description",
+      "noVariants": "No variants",
+      "placeholderVariant": "Inherit product default",
+      "all": "All",
+      "selectRow": "Select a row above to see details",
+      "openEditor": "Open editor",
+      "sortDefault": "Default",
+      "sortSlugAsc": "Slug A-Z",
+      "sortSlugDesc": "Slug Z-A",
+      "sortTitleAsc": "Title A-Z",
+      "sortTitleDesc": "Title Z-A",
+      "sortStatusAsc": "Status A-Z",
+      "sortStatusDesc": "Status Z-A",
+      "axes": "Variant axes",
+      "axisCode": "Axis code",
+      "axisOptions": "Options (comma separated)",
+      "addAxis": "Add axis",
+      "removeAxis": "Remove",
+      "matrix": "Variant matrix",
+      "autoSku": "Leave SKU empty to auto-generate from product slug + axis values",
+      "matrixEmpty": "No axes configured - one single-variant SKU will be created"
+    },
+    "categories": {
+      "title": "Categories",
+      "empty": "No categories"
+    },
+    "table": {
+      "selected": "selected",
+      "empty": "No results"
+    },
+    "shell": {
+      "searchPlaceholder": "Search products, orders, customers, or run a command…",
+      "commands": "Commands",
+      "goto": "Go to",
+      "noResults": "No matches",
+      "density": "Density",
+      "comfortable": "Comfortable",
+      "compact": "Compact",
+      "toggleTheme": "Toggle dark mode",
+      "detailPanel": "Detail panel"
+    }
+  },
+  "error": {
+    "notFound": "Page not found",
+    "forbidden": "You don't have permission",
+    "conflict": "Data changed, please refresh and try again"
+  }
+}
