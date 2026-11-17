@@ -293,18 +293,6 @@ run_matrix(){
   else fail "S5b canonical 把非追踪参数剔掉了" "实际=${P_CAN:-<空>} 期望=${pref}（只许剔 utm_*/gclid/fbclid/msclkid/yclid；剔光等于把变体/来源流量归并成一页）"; fi
   rec "$pref" "$P_NI" "$P_CAN"
 
-  # ---- S6 站内搜索：noindex,follow + canonical 不跨 URL + 不 Disallow + 真渲染
-  #
-  # ⚠️ **这一格的旧写法是「有 canonical 就红」，已作废**——它和本文件 S8 直接矛盾：
-  #    同一份"输出自指 canonical 的搜索页"会同时得到 `S6 fail` 与 `S8 warned`，脚本对同一个实现
-  #    给出两个相反结论。矛盾不在脚本，在**上游文档自己**：
-  #      · docs/01 §6.1 的 S6 单元格 + 三步判别口诀第 1 步 + 反例③ 仍写「不输出 canonical」；
-  #      · 同一张表的 S8 告警条、需求 #44/#68、docs/06 TC-SEO-09② 写的是「只禁**跨 URL**，
-  #        自指是告警且**不得因此去删它**」。
-  #    本脚本按后一组实现，因为旧口径会**误杀正常实现**（模板统一输出 canonical），而且那个假红
-  #    会逼人去删 canonical——删完整页 `<head>` 也能满足旧口径（noindex 可只靠 X-Robots-Tag 给），
-  #    于是断言变成"逼出更差的实现"。已在 docs/01 §6.1 登记待改（S6 单元格 / 口诀第 1 步 / 反例③
-  #    三处），改完这整段注释就该删。
   echo "-- S6 站内搜索 noindex,follow / canonical 不跨 URL / 不 Disallow / 真渲染"
   local su="$BASE/$LOCALE/search?q=robot"
   probe_chain "$su"
