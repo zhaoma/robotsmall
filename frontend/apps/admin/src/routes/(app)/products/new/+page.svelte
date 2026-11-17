@@ -88,7 +88,7 @@
   }
 
   // SKU 留空时的默认值：slug + 各轴取值大写。让"只想快速建一批"的场景不必逐行敲 SKU，
-  // 同时又保证后端 SKU 唯一（同一商品内各组合的取值不同，拼出来天然不同）。
+  // 不同组合的轴取值不同，拼出的默认值天然不同；SKU 唯一性由后端领域校验与唯一索引保证。
   function autoSku(comboAxes: Record<string, string>): string {
     const values = Object.keys(comboAxes)
       .sort()
