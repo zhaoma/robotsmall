@@ -99,6 +99,31 @@ self_test_exit_codes() {
     failn=$((failn+1))
   fi
 
+  # ---- 信号路径的 fail-before-pass：注入 TERM，验"清理后终止"而不是"清理后继续" ----
+  # 用子进程跑**真门禁**，不在本函数里模拟 handler：模拟出来的副本永远不会烂，
+  # 而真 handler 会（旧版 `trap cleanup_all EXIT INT TERM` 就是清理完继续跑，
+  # 实测级联出 15 步 `<tmpdir>/<step>.log: No such file or directory` 假红）。
+  # 三条同时断言：① 退出码正好 143（128+TERM，不是 1/2/3 里的任何一个）
+  #              ② 打印了 GATE ABORTED（进程确实走了信号路径，不是碰巧非零）
+  #              ③ 输出里没有一条 No such file —— 这一条才是"没有级联假红"的直接证据。
+  local sigtmp
+  sigtmp=$(mktemp -d "${TMPDIR:-/tmp}/check-signal.XXXXXX") || { echo "FAIL: mktemp 失败"; return 1; }
+  CHECK_SELFTEST_TERM_AT=2 CHECK_LOCK_DIR="$sigtmp/lock" bash "$0" --fast > "$sigtmp/out" 2>&1
+  local sigrc=$?
+  total=$((total+1))
+  if [ "$sigrc" -eq 143 ]; then
+    if grep -q '^GATE ABORTED: 收到 TERM' "$sigtmp/out" && ! grep -q 'No such file or directory' "$sigtmp/out"; then
+      printf '  ok    注入 TERM（第 2 步）→ rc=143、打印 GATE ABORTED、无级联假红\n'
+    else
+      printf '  WRONG 注入 TERM → rc 对但输出不对：期望有 GATE ABORTED 且无 No such file\n'
+      failn=$((failn+1))
+    fi
+  else
+    printf '  WRONG 注入 TERM → 期望 rc=143（128+TERM）实得 rc=%s\n' "$sigrc"
+    failn=$((failn+1))
+  fi
+  rm -rf "$sigtmp"
+
   # ---- run_step 的明细后缀（门禁输出的契约）----------------------------------
   # 合成日志而不是真步骤：真步骤的输出随仓库内容变，用它当样本等于"判据捏被检对象"（塑形）。
   local dtlog
@@ -192,10 +217,30 @@ LOCK_STALE_SECONDS="${CHECK_LOCK_STALE_SECONDS:-1800}"
 LOCK_HELD=0
 
 cleanup_all() {
+  # 幂等：EXIT 路径与信号路径可能都走到这里；`rm -rf` 对已不存在的目标无副作用。
   [ "$LOCK_HELD" = "1" ] && rm -rf "$LOCKDIR"
   rm -rf "$LOGDIR"
 }
-trap cleanup_all EXIT INT TERM
+
+# INT/TERM 必须"清理后**终止**"，不能让 cleanup_all 返回后继续执行。
+# 实测（本仓复现：把 `kill -TERM $$` 插在临时副本的第 6 个 run_step 上，其余代码原样）：
+# 旧版清理完 LOGDIR 后脚本继续，接下来 15 个步骤全部打印
+#   `<tmpdir>/<step>.log: No such file or directory` 并判 FAIL ——
+# 这是门禁**自己造出来的假红**：既不是被测对象失败，也不是文档失败。
+# 假红和恒红门禁一样会被人关掉，所以它和真失败一样严重。
+on_signal() {
+  local code="$1" label="$2"
+  printf 'GATE ABORTED: 收到 %s，门禁中止（日志已清理，后续步骤不再执行）\n' "$label" >&2
+  # 先摘掉 EXIT trap：否则下面的 exit 会再触发一次 cleanup，且 EXIT trap 的返回码有机会
+  # 覆盖信号退出码。信号退出码用 128+signo（INT=130 / TERM=143），它不属于 docs/05 §4.6
+  # 的四值门禁词汇——进程是被中断的，根本没给出门禁结论，不能混成 1（真失败）。
+  trap - EXIT INT TERM
+  cleanup_all
+  exit "$code"
+}
+trap cleanup_all EXIT
+trap 'on_signal 130 INT' INT
+trap 'on_signal 143 TERM' TERM
 
 lock_field() {  # $1 文件 → 内容（去掉空白与 CR；文件不存在时为空）
   [ -f "$1" ] && tr -d ' \r\n' < "$1" 2>/dev/null || true
@@ -279,6 +324,12 @@ EXECUTED_NUMS=" "
 run_step() {
   local no="$1" name="$2" desc="$3"; shift 3
   local log="$LOGDIR/$name.log"
+  # **仅自证用**：正常运行时这个变量不存在，分支一次也不会进。
+  # 让子进程在指定步骤号上对自己发 TERM，验的是"信号后立刻终止、不产生级联假红"。
+  # 不在这里复刻 handler 的行为：复刻出来的副本永远不会烂，真 handler 会。
+  if [ -n "${CHECK_SELFTEST_TERM_AT:-}" ] && [ "$no" = "$CHECK_SELFTEST_TERM_AT" ]; then
+    kill -TERM $$
+  fi
   EXECUTED_NUMS="$EXECUTED_NUMS$no "
   printf '[%2s] %-20s ' "$no" "$name"
   if "$@" >"$log" 2>&1; then
