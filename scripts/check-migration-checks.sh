@@ -134,17 +134,49 @@ def unesc(lit):
 def norm(e):
     return re.sub(r'\s+', ' ', e).strip()
 
-# ---- 配置侧：name -> 表达式。名字可能是字面量，也可能是一个 const string。
+# 一个 C# 字符串"值"不止单段字面量，还可以是若干段用 + 拼起来（可跨行）。
+# 只认单段会让 CK_PAV_ExactlyOne（配置里 4 行 "…" + "…" + "…"）整条
+# HasCheckConstraint 匹配失败 —— 名字进不了 conf，C3 比对数从 9 掉到 8，
+# 而 DETAIL 照旧报"8 条一致"，读的人以为 9 条都看过。这正是本脚本要治的
+# "DETAIL 的数不度量它声称度量的东西"，只不过这次缺的是判据自己的视野。
+CONCAT = STR + r'(?:\s*\+\s*' + STR + r')*'
+
+def read_concat(src, pos):
+    """从 src[pos]（应是一个引号）读一段字符串拼接表达式，返回 (值, 结束下标)。
+    失败返回 (None, pos)。值仍是源码形态（含 \\" 转义），由调用方 unesc。"""
+    m = re.match(CONCAT, src[pos:], re.S)
+    if not m:
+        return None, pos
+    return ''.join(re.findall(STR, m.group(0), re.S)), pos + m.end()
+
+def skip_ws(src, pos):
+    while pos < len(src) and src[pos].isspace():
+        pos += 1
+    return pos
+
+# ---- 配置侧：name -> 表达式。名字可能是字面量、const，表达式可能是 + 拼接。
 conf = {}
 for f in sorted(glob.glob(os.path.join(conf_dir, '**', '*.cs'), recursive=True)):
     src = strip_comments(open(f, encoding='utf-8').read())
     consts = dict(re.findall(r'const\s+string\s+' + IDENT + r'\s*=\s*' + STR + r'\s*;', src))
-    for m in re.finditer(r'HasCheckConstraint\(\s*' + STR + r'\s*,\s*' + STR + r'\s*[,)]', src, re.S):
-        conf[unesc(m.group(1))] = norm(unesc(m.group(2)))
-    for m in re.finditer(r'HasCheckConstraint\(\s*' + IDENT + r'\s*,\s*' + STR + r'\s*[,)]', src, re.S):
-        nm = consts.get(m.group(1))
-        if nm:
-            conf[nm] = norm(unesc(m.group(2)))
+    for m in re.finditer(r'HasCheckConstraint\s*\(', src):
+        p = skip_ws(src, m.end())
+        name = None
+        if p < len(src) and src[p] == '"':     # 参数1：字面量名
+            name, p = read_concat(src, p)
+        else:                                  # 参数1：const 标识符名
+            im = re.match(IDENT, src[p:])
+            if im:
+                name = consts.get(im.group(1))
+                p = skip_ws(src, p + im.end())
+        if p >= len(src) or src[p] != ',':
+            continue
+        p = skip_ws(src, p + 1)
+        if p >= len(src) or src[p] != '"':    # 参数2：表达式（可拼接）
+            continue
+        expr, _ = read_concat(src, p)
+        if name and expr is not None:
+            conf[unesc(name)] = norm(unesc(expr))
 
 # ---- 迁移侧：只回放 Up() 体，按文件名顺序（时间戳前缀 = 迁移顺序）
 def up_body(src):
@@ -177,19 +209,38 @@ for f in sorted(glob.glob(os.path.join(mig_dir, '*.cs'))):
         continue
     for m in re.finditer(r'\b(DropCheckConstraint|AddCheckConstraint|CheckConstraint)\s*\((.*?)\)\s*;', body, re.S):
         fn, args = m.group(1), m.group(2)
-        lits = re.findall(STR, args, re.S)
+        # 参数仍按"命名参数优先、位置参数兜底"解析，但表达式值统一走 read_concat，
+        # 与配置侧同构 —— 否则配置能读拼接、迁移读不了，比对数又会对不上。
+        named = {}
+        for key in ('name', 'sql', 'table'):
+            km = re.search(r'\b' + key + r'\s*:\s*', args, re.S)
+            if not km:
+                continue
+            q = skip_ws(args, km.end())
+            if q < len(args) and args[q] == '"':
+                val, _ = read_concat(args, q)
+                if val is not None:
+                    named[key] = val
+        # 位置参数：按顺序取所有拼接串
+        pos_vals = []
+        q = 0
+        while q < len(args):
+            q = skip_ws(args, q)
+            if q < len(args) and args[q] == '"':
+                val, q = read_concat(args, q)
+                if val is not None:
+                    pos_vals.append(val)
+            else:
+                q += 1
         if fn == 'DropCheckConstraint':
-            nm = re.search(r'name:\s*' + STR, args, re.S)
-            name = unesc(nm.group(1)) if nm else (unesc(lits[0]) if lits else None)
+            name = unesc(named['name']) if 'name' in named else (unesc(pos_vals[0]) if pos_vals else None)
             if name:
                 ops.append((name, None))
             continue
-        nm = re.search(r'name:\s*' + STR, args, re.S)
-        sq = re.search(r'sql:\s*' + STR, args, re.S)
-        if nm and sq:
-            ops.append((unesc(nm.group(1)), norm(unesc(sq.group(1)))))
-        elif len(lits) >= 2:
-            ops.append((unesc(lits[0]), norm(unesc(lits[1]))))
+        if 'name' in named and 'sql' in named:
+            ops.append((unesc(named['name']), norm(unesc(named['sql']))))
+        elif len(pos_vals) >= 2:
+            ops.append((unesc(pos_vals[0]), norm(unesc(pos_vals[1]))))
 
 final = {}
 for name, expr in ops:
@@ -446,12 +497,64 @@ CS
     echo "  [FAIL] 样本8 期望 rc=0（Down 不算最终态），实际 rc=$rc"; failures=$((failures+1))
   fi
 
+  # 样本 9：表达式是 4 行 "…" + "…" 拼接（本仓 CK_PAV_ExactlyOne 的真实形状）
+  # 且 const 间接名字 → 必须绿，且比对数含这一条。
+  # 这一条是 data-engineer 报"DETAIL 说比 8 条、配置其实 9 条"的直接产物：
+  # 旧正则只认单个字符串字面量，拼接那一整条 HasCheckConstraint 匹配失败、名字进不了 conf。
+  mkdir -p "$tmp/s9/conf" "$tmp/s9/mig"
+  cat > "$tmp/s9/conf/AConfiguration.cs" <<'CS'
+public const string ExactlyOneName = "CK_F_Concat";
+void Cfg() {
+    t.HasCheckConstraint(
+        ExactlyOneName,
+        "(CASE WHEN \"A\" IS NOT NULL THEN 1 ELSE 0 END"
+        + " + CASE WHEN \"B\" IS NOT NULL THEN 1 ELSE 0 END) = 1");
+}
+CS
+  mk_mig "$tmp/s9/mig/M1.cs" "CK_F_Concat" \
+    '(CASE WHEN \"A\" IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN \"B\" IS NOT NULL THEN 1 ELSE 0 END) = 1'
+  set +e
+  local out9
+  out9=$(CK_CONF_DIR="$tmp/s9/conf" CK_MIG_DIR="$tmp/s9/mig" bash "$0" 2>&1)
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ] && printf '%s\n' "$out9" | grep -q 'C3 比对 1 个 / 不一致 0 个'; then
+    echo "  [ok] 样本9 拼接表达式 + const 名 → 绿，且比对数含这一条（不是静默跳过）"
+  else
+    echo "  [FAIL] 样本9 期望 rc=0 且比对 1 条，实际 rc=$rc 输出=[$out9]"; failures=$((failures+1))
+  fi
+
+  # 样本 10：拼接表达式里某一段不同 → 必须红在「表达式与配置不一致」。
+  # 没有这一条，样本9 可能被"根本没比、直接放行"满足 —— 那是恒绿，不是判据。
+  mkdir -p "$tmp/s10/conf" "$tmp/s10/mig"
+  cat > "$tmp/s10/conf/AConfiguration.cs" <<'CS'
+public const string ExactlyOneName = "CK_G_Concat";
+void Cfg() {
+    t.HasCheckConstraint(
+        ExactlyOneName,
+        "(CASE WHEN \"A\" IS NOT NULL THEN 1 ELSE 0 END"
+        + " + CASE WHEN \"B\" IS NOT NULL THEN 1 ELSE 0 END) = 1");
+}
+CS
+  mk_mig "$tmp/s10/mig/M1.cs" "CK_G_Concat" \
+    '(CASE WHEN \"A\" IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN \"B\" IS NOT NULL THEN 1 ELSE 0 END) = 2'
+  set +e
+  local out10
+  out10=$(CK_CONF_DIR="$tmp/s10/conf" CK_MIG_DIR="$tmp/s10/mig" bash "$0" 2>&1)
+  rc=$?
+  set -e
+  if [ "$rc" -eq 1 ] && printf '%s\n' "$out10" | grep -q '表达式与配置不一致'; then
+    echo "  [ok] 样本10 拼接表达式某段不同 → rc=1 且红在「表达式与配置不一致」"
+  else
+    echo "  [FAIL] 样本10 期望 rc=1 且红在表达式，实际 rc=$rc"; failures=$((failures+1))
+  fi
+
   echo
   if [ "$failures" -eq 0 ]; then
-    echo "自证通过：8/8"
+    echo "自证通过：10/10"
     return 0
   fi
-  echo "自证失败：$failures/8 条样本未达预期"
+  echo "自证失败：$failures/10 条样本未达预期"
   return 1
 }
 
