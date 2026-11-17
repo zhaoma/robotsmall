@@ -1,0 +1,36 @@
+{
+  "slug": "variant-acceptance-tee",
+  "title": "六变体验收 T 恤",
+  "variants": [
+    {
+      "sku": "ACC-BLK-S",
+      "axes": { "color": "black", "size": "s" },
+      "price": { "currency": "CNY", "amountMinor": 1999 }
+    },
+    {
+      "sku": "ACC-BLK-M",
+      "axes": { "color": "black", "size": "m" },
+      "price": { "currency": "CNY", "amountMinor": 2499 }
+    },
+    {
+      "sku": "ACC-BLK-L",
+      "axes": { "color": "black", "size": "l" },
+      "price": { "currency": "CNY", "amountMinor": 3299 }
+    },
+    {
+      "sku": "ACC-WHT-S",
+      "axes": { "color": "white", "size": "s" },
+      "price": { "currency": "CNY", "amountMinor": 2199 }
+    },
+    {
+      "sku": "ACC-WHT-M",
+      "axes": { "color": "white", "size": "m" },
+      "price": { "currency": "CNY", "amountMinor": 2899 }
+    },
+    {
+      "sku": "ACC-WHT-L",
+      "axes": { "color": "white", "size": "l" },
+      "price": { "currency": "CNY", "amountMinor": 3599 }
+    }
+  ]
+}
