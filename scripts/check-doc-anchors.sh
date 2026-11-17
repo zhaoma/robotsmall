@@ -39,6 +39,18 @@ ROOT = os.getcwd()
 # 于是 `docs/02-数据模型.md §7.3.4` 会被解析到对照表上、报"该文档里没有这个节号"。
 # 那条报错本身是对的（引用的文件确实没被核到），错的是**核错了文件**。
 REF = re.compile(r'docs/(\d{2})((?:-[^\s`\'"§]*?)?)\s*§\s*(\d+(?:\.\d+)*)')
+# 另一种真实存在的写法：反引号包两位编号再跟节号，例如 `00` §5.4.3。
+# 它以前完全没被扫到（39 条实测、0 条失效，所以接进来不会立刻制造一片假红）。
+# **注意这里不能只按两位编号取"第一篇"文档**：本仓同时有 docs/00-项目交付方案.md
+# 与 docs/architecture/00-architecture.md，后者才有 §5.4.3。曾经有人（包括我）
+# 只看了前者就报"悬空锚"——那正是本脚本方向五/六已经防住的坑，报的人自己又踩了一遍。
+BT = re.compile(r'`(\d{2})`\s*§\s*(\d+(?:\.\d+)*)')
+
+def add_refs(p, lineno, line, out):
+    for m in REF.finditer(line):
+        out.append((p, lineno, m.group(1), m.group(2), m.group(3), m.group(0)))
+    for m in BT.finditer(line):
+        out.append((p, lineno, m.group(1), '', m.group(2), m.group(0)))
 
 def scan_refs(root):
     """扫 scripts/*.sh **与** docs/**/*.md。
@@ -56,8 +68,7 @@ def scan_refs(root):
     out = []
     for p in sorted(glob.glob(os.path.join(root, 'scripts', '*.sh'))):
         for i, line in enumerate(io.open(p, encoding='utf-8'), 1):
-            for m in REF.finditer(line):
-                out.append((os.path.basename(p), i, m.group(1), m.group(2), m.group(3), m.group(0)))
+            add_refs(os.path.basename(p), i, line, out)
     d = os.path.join(root, 'docs')
     for dp, _, names in os.walk(d):
         for n in sorted(names):
@@ -65,8 +76,7 @@ def scan_refs(root):
                 continue
             p = os.path.join(dp, n)
             for i, line in enumerate(io.open(p, encoding='utf-8'), 1):
-                for m in REF.finditer(line):
-                    out.append((os.path.relpath(p, root), i, m.group(1), m.group(2), m.group(3), m.group(0)))
+                add_refs(os.path.relpath(p, root), i, line, out)
     return out
 
 def doc_candidates(prefix, suffix, root=ROOT):
@@ -238,6 +248,22 @@ def self_test():
         check(len(f7) == 1 and '§9.99' in f7[0][1] and t7 == 1,
               '注入：docs 内引用不存在的 §9.99 → 必须红（证明 docs 也在扫描范围内）：%s'
               % (f7[0][1][:60] if f7 else '未报红'))
+
+        # 方向八/九：反引号包编号的写法也要扫。样本仍从两段拼，避免本文件自己被扫到。
+        # 少了方向九，"BT 正则写错/没接进 add_refs"不会让任何自证变红。
+        bt_ok = os.path.join(tmp, 'bt')
+        write_sample(bt_ok, 'docs/05-示例.md', SAMPLE_DOC)
+        write_sample(bt_ok, 'docs/06-调用方.md', '# 调用方\n\n闸门见 `' '05` §4.6`。\n')
+        f8, t8 = judge(bt_ok)
+        check(not f8 and t8 == 1,
+              '反引号式引用指向真实节（§4.6）→ 绿：%d 条引用、%d 处失败' % (t8, len(f8)))
+        bt_bad = os.path.join(tmp, 'btbad')
+        write_sample(bt_bad, 'docs/05-示例.md', SAMPLE_DOC)
+        write_sample(bt_bad, 'docs/06-调用方.md', '# 调用方\n\n闸门见 `' '05` §9.99`。\n')
+        f9, _ = judge(bt_bad)
+        check(len(f9) == 1 and '§9.99' in f9[0][1],
+              '注入：反引号式引用指向不存在的 §9.99 → 红并点名：%s'
+              % (f9[0][1][:60] if f9 else '未报红'))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -248,7 +274,8 @@ def self_test():
         print('== 自证失败：%d 项不符合预期' % len(failed))
         return 1
     print('== 自证通过：%d 项（正样本绿 / 文档改节号红 / 脚本引用不存在节红 / 跨文档编号缺失红'
-          ' / 同编号两篇时全名按全名核 / 全名指错篇必红 / docs 内引用也在扫描范围内）' % len(checks))
+          ' / 同编号两篇时全名按全名核 / 全名指错篇必红 / docs 内引用也在扫描范围内'
+          ' / 反引号式引用绿与红）' % len(checks))
     return 0
 
 args = sys.argv[1:]
