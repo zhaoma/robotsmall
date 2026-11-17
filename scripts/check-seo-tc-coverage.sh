@@ -165,7 +165,7 @@ EOF
   #    它必须**不被**当成 S 档 —— 第一版就在这里误伤了三条真文档，是"不误伤"的回归样本。
   out=$(check_pair "$tmp/01ok.md" "$tmp/01ok.md" 2>&1); rc=$?
   # check_pair 不存在时这里会 127，自证自己就会炸 —— 显式判一次，别让它冒充"红在预期那条"
-  [ "$rc" -eq 0 ] && echo "  ok    正样本（3 个 S 全被 TC 行引用）→ rc=0" || {
+  [ "$rc" -eq 0 ] && echo "  ok    正样本（3 个 S 全被 TC 行引用）+ 误伤回归样本（INV-S01/S03/S07 不算 S 档）→ rc=0" || {
     echo "  WRONG 正样本应绿却 rc=${rc}；输出：$(printf '%s' "$out" | head -3)"; sfail=$((sfail+1)); }
 
   # ② 只在正文提到 = 必须红，且点名 S3
