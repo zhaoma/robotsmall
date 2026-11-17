@@ -170,7 +170,7 @@ EOF
 
   # ② 只在正文提到 = 必须红，且点名 S3
   out=$(check_pair "$tmp/01miss.md" "$tmp/01miss.md" 2>&1); rc=$?
-  if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'FAIL  S3 '; then
+  if [ "$rc" -eq 1 ] && grep -q 'FAIL  S3 ' <<< "$out"; then
     echo "  ok    只在正文提到 S 不算认领 → 红在 S3：$(printf '%s' "$out" | grep 'FAIL' | head -1)"
   else
     echo "  WRONG 缺引用应 rc=1 且点名 S3，实际 rc=${rc}；输出：$(printf '%s' "$out" | head -3)"; sfail=$((sfail+1))
@@ -178,7 +178,7 @@ EOF
 
   # ③ 引用了不存在的 S 号 = 笔误，必须红
   out=$(check_pair "$tmp/01stray.md" "$tmp/01stray.md" 2>&1); rc=$?
-  if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q '不存在的 S9'; then
+  if [ "$rc" -eq 1 ] && grep -q '不存在的 S9' <<< "$out"; then
     echo "  ok    TC 行写了不存在的 S9 → 红并点出笔误"
   else
     echo "  WRONG 笔误应 rc=1，实际 rc=${rc}；输出：$(printf '%s' "$out" | head -3)"; sfail=$((sfail+1))
@@ -186,7 +186,7 @@ EOF
 
   # ④ 解析不出键集必须 rc=2（未验证），不能是 0
   out=$(check_pair "$tmp/01nokeys.md" "$tmp/01nokeys.md" 2>&1); rc=$?
-  if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q '^PRECONDITION'; then
+  if [ "$rc" -eq 2 ] && grep -q '^PRECONDITION' <<< "$out"; then
     echo "  ok    §6.1 解析不出键集 → rc=2 且打印 PRECONDITION（不冒充全覆盖）"
   else
     echo "  WRONG 解析失败应 rc=2，实际 rc=${rc}；输出：$(printf '%s' "$out" | head -3)"; sfail=$((sfail+1))

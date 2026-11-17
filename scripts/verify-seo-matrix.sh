@@ -926,7 +926,10 @@ PY
       if [ "$want" = "PRECONDITION" ]; then
         # 缺 fixture 必须是 2，不是 0 也不是 1：0 会让人以为"验过了且通过"，1 会被当成"真失败"去看红字，
         # 两者都错。只有 2 + 明确的 PRECONDITION 行才表示"这一档没验"。
-        if [ "$rc" -eq 2 ] && printf '%s\n' "$out" | grep -q '^PRECONDITION'; then
+        # **必须用 here-string，不能 `printf ... | grep -q`**：本脚本开了 `pipefail`，
+        # grep -q 一命中就把读端关掉，printf 还在写就得到 "Broken pipe"、整条管线变非零 ——
+        # 于是"确实打印了 PRECONDITION"反被判成失败（v8/v11/v12 三条假红，实测踩过）。
+        if [ "$rc" -eq 2 ] && grep -q '^PRECONDITION' <<< "$out"; then
           echo "  ok    注入[$mode] $desc → rc=2 且打印 PRECONDITION（未验证不被当成绿）"
         else
           echo "  FAIL  注入[$mode] $desc → 期望 rc=2 + PRECONDITION，实际 rc=${rc}，首条红：${first:-（无）}"
@@ -937,8 +940,9 @@ PY
         # 只判 `grep -q "$want"` 而允许多出一条红，会把"顺手也红了一条无关的"当成通过；
         # 但也不能要求"**只有**这一条红"——v18 那种一个注入命中三条是**正确**行为。
         miss=""
-        printf '%s\n' "$out" | grep 'FAIL' | grep -q -- "$want" || miss="$want"
-        if [ -n "$want2" ] && ! printf '%s\n' "$out" | grep 'FAIL' | grep -q -- "$want2"; then
+        printf '%s\n' "$out" | grep 'FAIL' > "$tmp/fails.$mode"
+        grep -q -- "$want" "$tmp/fails.$mode" || miss="$want"
+        if [ -n "$want2" ] && ! grep -q -- "$want2" "$tmp/fails.$mode"; then
           miss="${miss:+$miss 与 }$want2"
         fi
         if [ -z "$miss" ]; then
