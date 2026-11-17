@@ -254,4 +254,43 @@ public sealed class ProductTests
                 () => Product.Rehydrate(Guid.NewGuid(), "t-shirt", "T", ProductStatus.Draft, variants))
             .Code.ShouldBe("INV_PRODUCT_SKU_DUPLICATE");
     }
+
+    [Fact]
+    public void UpdateVariantSku_改成另一个变体的SKU必须拒绝()
+    {
+        // 绕过面：UpdateVariantSku 若只重建单变体、不重跑整集守卫，就会造出重复 SKU。
+        // 建品时两条 SKU 不同，改动其中一个撞向另一个 —— 必须拒绝。
+        var firstId = Guid.NewGuid();
+        var product = Product.Create(
+            Guid.NewGuid(),
+            "t-shirt",
+            "T",
+            new[]
+            {
+                new ProductVariant(firstId, "TS-RED-M", "color=red|size=m", Prices(1999)),
+                new ProductVariant(Guid.NewGuid(), "TS-RED-L", "color=red|size=l", Prices(2099)),
+            });
+
+        Should.Throw<InvariantViolationException>(() => product.UpdateVariantSku(firstId, "TS-RED-L"))
+            .Code.ShouldBe("INV_PRODUCT_SKU_DUPLICATE");
+    }
+
+    [Fact]
+    public void UpdateVariantSku_改成自己的同名SKU是幂等_应放行()
+    {
+        // 幂等：换成与自己相同的 SKU 不构成重复，不能把自己算进去。
+        var firstId = Guid.NewGuid();
+        var product = Product.Create(
+            Guid.NewGuid(),
+            "t-shirt",
+            "T",
+            new[]
+            {
+                new ProductVariant(firstId, "TS-RED-M", "color=red|size=m", Prices(1999)),
+                new ProductVariant(Guid.NewGuid(), "TS-RED-L", "color=red|size=l", Prices(2099)),
+            });
+
+        Should.NotThrow(() => product.UpdateVariantSku(firstId, "TS-RED-M"));
+        product.Variants.Count(v => v.Sku == "TS-RED-M").ShouldBe(1);
+    }
 }

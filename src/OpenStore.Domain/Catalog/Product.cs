@@ -81,7 +81,13 @@ public sealed partial class Product
     {
         var index = IndexOfVariant(variantId);
         var current = _variants[index];
-        _variants[index] = new ProductVariant(current.Id, sku, current.AxisSignature, current.Prices);
+        // 先按新 SKU 重建（复用 ProductVariant 的格式守卫），再对整集复查唯一性：
+        // 只重建单变体不过聚合守卫，会给"改 SKU"留一条绕过口（错误码退化成裸 DB 异常）。
+        // 复查用的 helper 与 GuardVariants 同一个，改 SKU 与建品不可能分叉出两套判重。
+        var updated = new ProductVariant(current.Id, sku, current.AxisSignature, current.Prices);
+        var candidate = new List<ProductVariant>(_variants) { [index] = updated };
+        EnsureUniqueSkus(candidate);
+        _variants[index] = updated;
     }
 
     /// <summary>
@@ -183,11 +189,23 @@ public sealed partial class Product
                 $"Product has duplicate variant id '{duplicateId.Key}'.");
         }
 
-        // SKU 唯一是硬契约（数据模型 §6.1 UX_Variant_Sku 唯一、不依赖 collation）。
-        // 领域层做前置守卫，给出友好错误码；DB 唯一索引兜底防并发绕过。二者职责不同，不是重复：
-        // 轴签名唯一这里也查了，SKU 属同一模式。Ordinal 与 DB 索引的字节序一致（大小写敏感，
-        // SKU 规范本身要求大写，见 ProductVariant 守卫）。
-        var duplicateSku = list
+        EnsureUniqueSkus(list);
+
+        return list;
+    }
+
+    /// <summary>
+    /// SKU 唯一守卫。建品/重建（<see cref="GuardVariants"/>）与改 SKU（<see cref="UpdateVariantSku"/>）
+    /// 共用这一处，改两条路径不可能分叉出两套判重逻辑。
+    /// </summary>
+    /// <remarks>
+    /// SKU 唯一是硬契约（数据模型 §6.1 UX_Variant_Sku 唯一、不依赖 collation）。
+    /// 领域层做前置守卫给友好错误码，DB 唯一索引兜底防并发绕过，二者职责不同不是重复。
+    /// Ordinal 与 DB 索引字节序一致（大小写敏感，SKU 规范要求大写，见 ProductVariant 守卫）。
+    /// </remarks>
+    private static void EnsureUniqueSkus(IReadOnlyList<ProductVariant> variants)
+    {
+        var duplicateSku = variants
             .GroupBy(v => v.Sku, StringComparer.Ordinal)
             .FirstOrDefault(g => g.Count() > 1);
         if (duplicateSku is not null)
@@ -196,8 +214,6 @@ public sealed partial class Product
                 "PRODUCT_SKU_DUPLICATE",
                 $"Product has duplicate variant SKU '{duplicateSku.Key}'.");
         }
-
-        return list;
     }
 
     private static string GuardSlug(string slug)
