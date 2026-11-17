@@ -39,7 +39,8 @@ ROOT = os.getcwd()
 # 于是 `docs/02-数据模型.md §7.3.4` 会被解析到对照表上、报"该文档里没有这个节号"。
 # 那条报错本身是对的（引用的文件确实没被核到），错的是**核错了文件**。
 REF = re.compile(r'docs/(\d{2})((?:-[^\s`\'"§]*?)?)\s*§\s*(\d+(?:\.\d+)*)')
-# 另一种真实存在的写法：反引号包两位编号再跟节号，例如 `00` §5.4.3。
+# 另一种真实存在的写法：反引号包两位编号再跟节号（反引号 00 反引号 + 空格 + §5.4.3），
+# 编号本身不带 docs/ 前缀。
 # 它以前完全没被扫到（39 条实测、0 条失效，所以接进来不会立刻制造一片假红）。
 # **注意这里不能只按两位编号取"第一篇"文档**：本仓同时有 docs/00-项目交付方案.md
 # 与 docs/architecture/00-architecture.md，后者才有 §5.4.3。曾经有人（包括我）
@@ -103,6 +104,12 @@ def doc_candidates(prefix, suffix, root=ROOT):
 
 HEADING = re.compile(r'^#{1,5}\s*(\d+(?:\.\d+)*)[.\s、]')
 
+# 短名歧义告警（**只告警、不判红**）。判据不是"出现了短名"，而是"答案会不会变"：
+# 候选 ≥2 是必要条件，只有其中一部分文档含该节号时才告警（两个候选给出不同答案）。
+# 按 (编号, 节号) 聚合：全仓实测 23 处、只有 7 个不同的键；逐处打印会把真正危险的那一条
+# 淹没在噪音里，而"告警被淹没"等于"没有告警"。
+AMBIG = {}
+
 def headings(path):
     got = set()
     for line in io.open(path, encoding='utf-8'):
@@ -112,7 +119,9 @@ def headings(path):
     return got
 
 def judge(root):
-    """返回 (失败列表, 引用总数)"""
+    """返回 (失败列表, 引用总数)；短名歧义写进全局 AMBIG，不影响判定。"""
+    global AMBIG
+    AMBIG = {}
     failures = []
     refs = scan_refs(root)
     cache = {}
@@ -134,11 +143,27 @@ def judge(root):
             failures.append(('%s:%d' % (script, line),
                              '引用了 %s §%s，但该文档里没有这个节号（%s）'
                              % (os.path.relpath(cands[0], root), num, raw)))
+        elif not suffix and len(cands) > 1:
+            # 短名 + 多候选：只有"答案不同"（部分候选有该节、部分没有）才值得说。
+            # 候选虽多但都有该节 → 读哪篇都能找到，写法不整洁而已，不占读者的注意力。
+            for q in cands:
+                if q not in cache:
+                    cache[q] = headings(q)
+            have = [os.path.relpath(q, root) for q in cands if num in cache[q]]
+            if 0 < len(have) < len(cands):
+                key = (prefix, num)
+                rec = AMBIG.setdefault(key, {'n': 0, 'have': have,
+                                             'all': [os.path.relpath(q, root) for q in cands]})
+                rec['n'] += 1
     return failures, len(refs)
 
 def report(failures, total):
     for loc, msg in failures:
         print('%s ANCHOR_MISSING: %s' % (loc, msg))
+    for (prefix, num), rec in sorted(AMBIG.items()):
+        print('WARN 短名 docs/%s §%s 有 %d 处引用；候选 %s 中只有 %s 含该节 —— '
+              '写全名，否则不同读者会拿到不同答案'
+              % (prefix, num, rec['n'], ', '.join(rec['all']), ', '.join(rec['have'])))
     if failures:
         print('FAILED: %d 处（扫到 %d 条 docs/NN §x.y 引用）' % (len(failures), total))
         return 1
@@ -264,6 +289,25 @@ def self_test():
         check(len(f9) == 1 and '§9.99' in f9[0][1],
               '注入：反引号式引用指向不存在的 §9.99 → 红并点名：%s'
               % (f9[0][1][:60] if f9 else '未报红'))
+
+        # 方向十/十一：短名多候选的告警判据是"**答案不同**"，不是"出现短名"。
+        amb_dir = os.path.join(tmp, 'amb')
+        write_sample(amb_dir, 'docs/02-A.md', SAMPLE_DOC)
+        write_sample(amb_dir, 'docs/02-B.md', '# 另一篇\n\n### 9.9 别处才有的节\n')
+        write_sample(amb_dir, 'docs/06-调用方.md', '# 调用方\n\n见 `docs/0' '2 §4.6`。\n')
+        f10, _ = judge(amb_dir)
+        check(not f10 and ('02', '4.6') in AMBIG,
+              '短名多候选且只有一篇有该节 → 告警但判绿（不把写法不整洁混成失败）：%s'
+              % ('告警已记' if ('02', '4.6') in AMBIG else '未告警'))
+
+        same_dir = os.path.join(tmp, 'ambsame')
+        write_sample(same_dir, 'docs/02-A.md', SAMPLE_DOC)
+        write_sample(same_dir, 'docs/02-B.md', SAMPLE_DOC.replace('# 示例文档', '# 另一篇，也有同一节'))
+        write_sample(same_dir, 'docs/06-调用方.md', '# 调用方\n\n见 `docs/0' '2 §4.6`。\n')
+        f11, _ = judge(same_dir)
+        check(not f11 and not AMBIG,
+              '短名多候选但两篇都有该节（答案相同）→ 不告警（避免噪音淹没真告警）：%s'
+              % ('无告警' if not AMBIG else '误告警 %s' % list(AMBIG)))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -275,7 +319,7 @@ def self_test():
         return 1
     print('== 自证通过：%d 项（正样本绿 / 文档改节号红 / 脚本引用不存在节红 / 跨文档编号缺失红'
           ' / 同编号两篇时全名按全名核 / 全名指错篇必红 / docs 内引用也在扫描范围内'
-          ' / 反引号式引用绿与红）' % len(checks))
+          ' / 反引号式引用绿与红 / 短名多候选只在答案不同时告警）' % len(checks))
     return 0
 
 args = sys.argv[1:]
