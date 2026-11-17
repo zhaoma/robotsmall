@@ -1,0 +1,514 @@
+{
+  "_header": [
+    "M1 索引权威清单（golden snapshot，56 条命名索引）——V3 库侧判据的 D 侧唯一来源。",
+    "硬约束 1：本文件是提交时固定下来的基线；判据运行时禁止 sqlite3 ... > manifest 之类的动态生成。建库命令只是生成它的一次性工具，不是判据的一部分。",
+    "硬约束 2：必须带负向自证——删/改其中一条 name，V3 必须红在『索引集合不一致』；还原后绿。拿不到 fail-before-pass，V3 就是恒绿摆设。命令见 _self_test。",
+    "硬约束 3：改索引要同笔更新本 manifest。被检对象（库/迁移）会变、基准固定；若两者一起变而本文件没跟上，判据必须红。",
+    "来源：对空库应用单一基线迁移 20261117110220_M1CatalogInventoryAuth 后的 sqlite_master，一次性生成于 2026-11-17（生成后不再随库变动）。",
+    "判据只读 indexes[]；_counts 供交叉校验，不作为唯一判据。"
+  ],
+  "_counts": {
+    "named_indexes": 56,
+    "ux": 21,
+    "ix": 35,
+    "partial": 3,
+    "auto_pk": 24,
+    "auto_unique": 0,
+    "all_indexes_in_db": 80
+  },
+  "_self_test": {
+    "S_side": "空库应用迁移后的临时库：sqlite3 $DB \"SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%';\"",
+    "D_side": "jq -r '.indexes[].name' tests/fixtures/m1-index-manifest.json",
+    "negative": "先绿后红再绿：S 侧与 D 侧 sort 后 diff；再对 manifest 副本 jq 'del(.indexes[0])' 后 diff 必须输出被删的那一条；还原后 diff 必须空。",
+    "expected": {
+      "green": "diff 无输出 rc=0",
+      "red": "diff 输出被删掉的那一条 rc=1"
+    }
+  },
+  "indexes": [
+    {
+      "name": "IX_AttrDef_Filterable_Scope",
+      "table": "AttributeDefinition",
+      "columns": [
+        "IsFilterable",
+        "Scope"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_AttrDef_Scope",
+      "table": "AttributeDefinition",
+      "columns": [
+        "Scope"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_AttributeDefinition_GroupId",
+      "table": "AttributeDefinition",
+      "columns": [
+        "GroupId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_AttributeSetMember_Definition",
+      "table": "AttributeSetMember",
+      "columns": [
+        "AttributeDefinitionId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Audit_Action",
+      "table": "AuditLog",
+      "columns": [
+        "Action",
+        "OccurredAt"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Audit_Actor",
+      "table": "AuditLog",
+      "columns": [
+        "ActorType",
+        "ActorId",
+        "OccurredAt"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Audit_Object",
+      "table": "AuditLog",
+      "columns": [
+        "ObjectType",
+        "ObjectId",
+        "OccurredAt"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Audit_OccurredAt",
+      "table": "AuditLog",
+      "columns": [
+        "OccurredAt"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_CategoryAttrOverride_Definition",
+      "table": "CategoryAttributeOverride",
+      "columns": [
+        "AttributeDefinitionId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Category_AttributeSetId",
+      "table": "Category",
+      "columns": [
+        "AttributeSetId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Category_Parent_Sort",
+      "table": "Category",
+      "columns": [
+        "ParentId",
+        "SortOrder"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Category_Path",
+      "table": "Category",
+      "columns": [
+        "Path"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_MediaAsset_ContentHash",
+      "table": "MediaAsset",
+      "columns": [
+        "ContentHash"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_PAV_Facet",
+      "table": "ProductAttributeValue",
+      "columns": [
+        "AttributeDefinitionId",
+        "OptionId",
+        "ProductId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_PAV_Number",
+      "table": "ProductAttributeValue",
+      "columns": [
+        "AttributeDefinitionId",
+        "NumberValue"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_PAV_Product",
+      "table": "ProductAttributeValue",
+      "columns": [
+        "ProductId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_ProductAttributeValue_OptionId",
+      "table": "ProductAttributeValue",
+      "columns": [
+        "OptionId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_ProductCategory_Category_Product",
+      "table": "ProductCategory",
+      "columns": [
+        "CategoryId",
+        "ProductId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_ProductImage_MediaAssetId",
+      "table": "ProductImage",
+      "columns": [
+        "MediaAssetId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_ProductImage_Product_Sort",
+      "table": "ProductImage",
+      "columns": [
+        "ProductId",
+        "SortOrder"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_ProductImage_Variant",
+      "table": "ProductImage",
+      "columns": [
+        "VariantId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_ProductVariantAxis_AttributeDefinitionId",
+      "table": "ProductVariantAxis",
+      "columns": [
+        "AttributeDefinitionId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Product_Slug",
+      "table": "Product",
+      "columns": [
+        "Slug"
+      ],
+      "unique": true
+    },
+    {
+      "name": "IX_Product_Status_MinPrice",
+      "table": "Product",
+      "columns": [
+        "Status",
+        "MinPriceMinor",
+        "Id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Product_Status_PublishedAt",
+      "table": "Product",
+      "columns": [
+        "Status",
+        "PublishedAt"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Session_AbsoluteExpiresAt",
+      "table": "Session",
+      "columns": [
+        "AbsoluteExpiresAt"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Session_Actor",
+      "table": "Session",
+      "columns": [
+        "ActorType",
+        "ActorId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_StockLedger_ChangeType_Created",
+      "table": "StockLedger",
+      "columns": [
+        "ChangeType",
+        "CreatedAt"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_StockLedger_CreatedAt",
+      "table": "StockLedger",
+      "columns": [
+        "CreatedAt"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_StockLedger_Order",
+      "table": "StockLedger",
+      "columns": [
+        "OrderId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_StockLedger_Variant_Id",
+      "table": "StockLedger",
+      "columns": [
+        "VariantId",
+        "Id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_VAV_Attr_Option",
+      "table": "VariantAttributeValue",
+      "columns": [
+        "AttributeDefinitionId",
+        "OptionId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_VariantAttributeValue_OptionId",
+      "table": "VariantAttributeValue",
+      "columns": [
+        "OptionId"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Variant_Barcode",
+      "table": "ProductVariant",
+      "columns": [
+        "Barcode"
+      ],
+      "unique": false
+    },
+    {
+      "name": "IX_Variant_Product_Status",
+      "table": "ProductVariant",
+      "columns": [
+        "ProductId",
+        "Status",
+        "Position"
+      ],
+      "unique": false
+    },
+    {
+      "name": "UX_AdminUser_EmailNormalized",
+      "table": "AdminUser",
+      "columns": [
+        "EmailNormalized"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_AttrDefTranslation_Def_Locale",
+      "table": "AttributeDefinitionTranslation",
+      "columns": [
+        "AttributeDefinitionId",
+        "Locale"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_AttrOptionTranslation_Option_Locale",
+      "table": "AttributeOptionTranslation",
+      "columns": [
+        "AttributeOptionId",
+        "Locale"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_AttributeDefinition_Code",
+      "table": "AttributeDefinition",
+      "columns": [
+        "Code"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_AttributeGroup_Code",
+      "table": "AttributeGroup",
+      "columns": [
+        "Code"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_AttributeOption_Def_Code",
+      "table": "AttributeOption",
+      "columns": [
+        "AttributeDefinitionId",
+        "Code"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_AttributeSet_Code",
+      "table": "AttributeSet",
+      "columns": [
+        "Code"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_CategoryTranslation_Category_Locale",
+      "table": "CategoryTranslation",
+      "columns": [
+        "CategoryId",
+        "Locale"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_CategoryTranslation_Locale_Slug",
+      "table": "CategoryTranslation",
+      "columns": [
+        "Locale",
+        "Slug"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_MediaAsset_StorageKey",
+      "table": "MediaAsset",
+      "columns": [
+        "StorageKey"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_PAV_Product_Def_Option",
+      "table": "ProductAttributeValue",
+      "columns": [
+        "ProductId",
+        "AttributeDefinitionId",
+        "OptionId"
+      ],
+      "unique": true,
+      "filter": "\"OptionId\" IS NOT NULL"
+    },
+    {
+      "name": "UX_ProductCategory_PrimaryPerProduct",
+      "table": "ProductCategory",
+      "columns": [
+        "ProductId"
+      ],
+      "unique": true,
+      "filter": "\"IsPrimary\" = 1"
+    },
+    {
+      "name": "UX_ProductTranslation_Locale_Slug",
+      "table": "ProductTranslation",
+      "columns": [
+        "Locale",
+        "Slug"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_ProductTranslation_Product_Locale",
+      "table": "ProductTranslation",
+      "columns": [
+        "ProductId",
+        "Locale"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_Product_InternalCode",
+      "table": "Product",
+      "columns": [
+        "InternalCode"
+      ],
+      "unique": true,
+      "filter": "\"InternalCode\" IS NOT NULL"
+    },
+    {
+      "name": "UX_Product_PrimaryImageId",
+      "table": "Product",
+      "columns": [
+        "PrimaryImageId"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_VAV_Variant_Attr",
+      "table": "VariantAttributeValue",
+      "columns": [
+        "VariantId",
+        "AttributeDefinitionId"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_VariantAxis_Product_Def",
+      "table": "ProductVariantAxis",
+      "columns": [
+        "ProductId",
+        "AttributeDefinitionId"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_Variant_MainImageId",
+      "table": "ProductVariant",
+      "columns": [
+        "MainImageId"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_Variant_Product_AxisSignature",
+      "table": "ProductVariant",
+      "columns": [
+        "ProductId",
+        "AxisSignature"
+      ],
+      "unique": true
+    },
+    {
+      "name": "UX_Variant_Sku",
+      "table": "ProductVariant",
+      "columns": [
+        "Sku"
+      ],
+      "unique": true
+    }
+  ]
+}
