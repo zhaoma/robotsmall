@@ -32,9 +32,11 @@ namespace OpenStore.Infrastructure.Persistence.Configurations;
 /// 省掉前缀索引就要为每个后代分类各查一次 <c>ProductCategory</c>，而越靠近根的节点展开的 id 越多。
 /// </para>
 /// <para>
-/// <b><c>AttributeSetId</c> 本轮无外键、无索引</b>：目标表 <c>AttributeSet</c> 属属性批次。
-/// 不建索引是有意的——该列还没有任何 <c>WHERE</c> 消费者，而 FK 落地时 EF 会自动补上
-/// <c>IX_Category_AttributeSetId</c>，现在手工建一个同名索引只会和将来的自动索引打架。
+/// <b><c>AttributeSetId</c> 的外键在本批落地</b>（docs §1.2.5 定的是「FK → <c>AttributeSet</c> <c>Restrict</c>」）：
+/// 早期注释写「本轮无外键，因为 <c>AttributeSet</c> 属属性批次」—— 那句在
+/// <c>AttributeSet</c> 与 <c>Category</c> 同一批进 <c>M1CatalogInventoryAuth</c> 之后已不成立。
+/// <c>Restrict</c>：还有分类引用某个属性集时，该属性集不得物理删除。
+/// FK 索引由 EF 自动补 <c>IX_Category_AttributeSetId</c>，不手工建（手工建会与自动索引撞名）。
 /// </para>
 /// </remarks>
 public sealed class CategoryConfiguration : IEntityTypeConfiguration<CategoryRecord>
@@ -60,9 +62,8 @@ public sealed class CategoryConfiguration : IEntityTypeConfiguration<CategoryRec
         builder.Property(c => c.IsDeleted).IsRequired();
 
         // Version：并发令牌（数据模型 §1.4 把 Category 列进"需要乐观锁"的第一梯队）。
-        // ⚠️ **令牌已声明、拦截器尚未接入**：自增 `SaveChanges` 拦截器属 M2 基础设施批次，
-        // 在那之前 `Version` 不会随写入自增（行里的值恒为插入时的 1）。后果仅限"冲突检测暂时不生效"，
-        // 不会写出错数据；但**不允许映射层手工赋值**，也不要在 M1 的任何地方假设并发保护已经生效。
+        // 自增由 AuditFieldsInterceptor 统一维护（Added 置 1 / Modified 自增），
+        // **不允许映射层手工赋值**。之前这条注释写"拦截器尚未接入、属 M2"，已随 C11 落地作废。
         builder.Property(c => c.Version)
             .IsRequired()
             .IsConcurrencyToken();
@@ -84,5 +85,12 @@ public sealed class CategoryConfiguration : IEntityTypeConfiguration<CategoryRec
         // 分类页主路径：Path LIKE '/xxx/%' → 子树 id 集
         builder.HasIndex(c => c.Path)
             .HasDatabaseName("IX_Category_Path");
+
+        // 生效属性集 → AttributeSet，Restrict：还有分类引用时不得物理删除该集合
+        builder.HasOne<AttributeSetRecord>()
+            .WithMany()
+            .HasForeignKey(c => c.AttributeSetId)
+            .OnDelete(DeleteBehavior.Restrict)
+            .IsRequired(false);
     }
 }

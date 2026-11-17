@@ -13,6 +13,7 @@ using OpenStore.Application.Catalog.Queries;
 using OpenStore.Application.Common;
 using OpenStore.Application.Customers;
 using OpenStore.Infrastructure.Persistence;
+using OpenStore.Infrastructure.Persistence.Interceptors;
 using OpenStore.Infrastructure.Persistence.Repositories;
 using OpenStore.Infrastructure.Security;
 
@@ -36,10 +37,16 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 var connectionString = builder.Configuration.GetConnectionString("Default")
     ?? StoreDbContextFactory.DevelopmentConnectionString;
 
-builder.Services.AddDbContext<StoreDbContext>(options => options.UseSqlite(connectionString));
+// 审计尾部（CreatedAt/UpdatedAt/Version）由拦截器统一写入，不靠各仓储自己记得填。
+// 缺了 Version 的后果最隐蔽：乐观锁 WHERE Version = 0 永远命中，并发改同一行会静默覆盖。
+builder.Services.AddSingleton<AuditFieldsInterceptor>();
+builder.Services.AddDbContext<StoreDbContext>((sp, options) => options
+    .UseSqlite(connectionString)
+    .AddInterceptors(sp.GetRequiredService<AuditFieldsInterceptor>()));
 builder.Services.AddScoped<IProductRepository, SqliteProductRepository>();
 builder.Services.AddScoped<IProductAdminRepository, SqliteProductAdminRepository>();
 builder.Services.AddScoped<IAdminProductQuery, SqliteAdminProductQuery>();
+builder.Services.AddScoped<IAdminCategoryQuery, SqliteAdminCategoryQuery>();
 builder.Services.AddScoped<IStockRepository>(sp => new SqliteStockRepository(
     sp.GetRequiredService<StoreDbContext>(),
     sp.GetRequiredService<IClock>(),

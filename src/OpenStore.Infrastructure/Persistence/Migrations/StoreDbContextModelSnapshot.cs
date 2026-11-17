@@ -72,6 +72,372 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                     b.ToTable("AdminUser", (string)null);
                 });
 
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AttributeDefinitionRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DataType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("GroupId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsFilterable")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Scope")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Unit")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique()
+                        .HasDatabaseName("UX_AttributeDefinition_Code");
+
+                    b.HasIndex("GroupId");
+
+                    b.HasIndex("Scope")
+                        .HasDatabaseName("IX_AttrDef_Scope");
+
+                    b.HasIndex("IsFilterable", "Scope")
+                        .HasDatabaseName("IX_AttrDef_Filterable_Scope");
+
+                    b.ToTable("AttributeDefinition", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AttributeDefinitionTranslationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AttributeDefinitionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("HelpText")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Locale")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AttributeDefinitionId", "Locale")
+                        .IsUnique()
+                        .HasDatabaseName("UX_AttrDefTranslation_Def_Locale");
+
+                    b.ToTable("AttributeDefinitionTranslation", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AttributeGroupRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique()
+                        .HasDatabaseName("UX_AttributeGroup_Code");
+
+                    b.ToTable("AttributeGroup", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AttributeOptionRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AttributeDefinitionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ColorHex")
+                        .HasMaxLength(9)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AttributeDefinitionId", "Code")
+                        .IsUnique()
+                        .HasDatabaseName("UX_AttributeOption_Def_Code");
+
+                    b.ToTable("AttributeOption", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AttributeOptionTranslationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AttributeOptionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Locale")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AttributeOptionId", "Locale")
+                        .IsUnique()
+                        .HasDatabaseName("UX_AttrOptionTranslation_Option_Locale");
+
+                    b.ToTable("AttributeOptionTranslation", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AttributeSetMemberRecord", b =>
+                {
+                    b.Property<Guid>("AttributeSetId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AttributeDefinitionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsRequired")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("AttributeSetId", "AttributeDefinitionId");
+
+                    b.HasIndex("AttributeDefinitionId")
+                        .HasDatabaseName("IX_AttributeSetMember_Definition");
+
+                    b.ToTable("AttributeSetMember", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AttributeSetRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique()
+                        .HasDatabaseName("UX_AttributeSet_Code");
+
+                    b.ToTable("AttributeSet", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AuditLogRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("ActorId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActorLabel")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ActorType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AfterJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BeforeJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IpHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ObjectId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ObjectLabel")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ObjectType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OccurredAt")
+                        .HasDatabaseName("IX_Audit_OccurredAt");
+
+                    b.HasIndex("Action", "OccurredAt")
+                        .HasDatabaseName("IX_Audit_Action");
+
+                    b.HasIndex("ActorType", "ActorId", "OccurredAt")
+                        .HasDatabaseName("IX_Audit_Actor");
+
+                    b.HasIndex("ObjectType", "ObjectId", "OccurredAt")
+                        .HasDatabaseName("IX_Audit_Object");
+
+                    b.ToTable("AuditLog", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.CategoryAttributeOverrideRecord", b =>
+                {
+                    b.Property<Guid>("CategoryId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AttributeDefinitionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsHidden")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool?>("IsRequired")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("CategoryId", "AttributeDefinitionId");
+
+                    b.HasIndex("AttributeDefinitionId")
+                        .HasDatabaseName("IX_CategoryAttrOverride_Definition");
+
+                    b.ToTable("CategoryAttributeOverride", (string)null);
+                });
+
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.CategoryRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -114,6 +480,8 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AttributeSetId");
 
                     b.HasIndex("Path")
                         .HasDatabaseName("IX_Category_Path");
@@ -180,6 +548,115 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                     b.ToTable("CategoryTranslation", (string)null);
                 });
 
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.MediaAssetRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("ByteSize")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Height")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MediaType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OriginalName")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Width")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ContentHash")
+                        .HasDatabaseName("IX_MediaAsset_ContentHash");
+
+                    b.HasIndex("StorageKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_MediaAsset_StorageKey");
+
+                    b.ToTable("MediaAsset", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductAttributeValueRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AttributeDefinitionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool?>("BoolValue")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("NumberValue")
+                        .HasColumnType("REAL");
+
+                    b.Property<Guid?>("OptionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TextValue")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OptionId");
+
+                    b.HasIndex("ProductId")
+                        .HasDatabaseName("IX_PAV_Product");
+
+                    b.HasIndex("AttributeDefinitionId", "NumberValue")
+                        .HasDatabaseName("IX_PAV_Number");
+
+                    b.HasIndex("AttributeDefinitionId", "OptionId", "ProductId")
+                        .HasDatabaseName("IX_PAV_Facet");
+
+                    b.HasIndex("ProductId", "AttributeDefinitionId", "OptionId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_PAV_Product_Def_Option")
+                        .HasFilter("\"OptionId\" IS NOT NULL");
+
+                    b.ToTable("ProductAttributeValue", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PAV_BoolRange", "\"BoolValue\" IS NULL OR \"BoolValue\" IN (0, 1)");
+
+                            t.HasCheckConstraint("CK_PAV_ExactlyOne", "(CASE WHEN \"OptionId\" IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN \"NumberValue\" IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN \"TextValue\" IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN \"BoolValue\" IS NOT NULL THEN 1 ELSE 0 END) = 1");
+                        });
+                });
+
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductCategoryRecord", b =>
                 {
                     b.Property<Guid>("ProductId")
@@ -216,10 +693,76 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductImageRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AltText")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("MediaAssetId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("VariantId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaAssetId");
+
+                    b.HasIndex("VariantId")
+                        .HasDatabaseName("IX_ProductImage_Variant");
+
+                    b.HasIndex("ProductId", "SortOrder")
+                        .HasDatabaseName("IX_ProductImage_Product_Sort");
+
+                    b.ToTable("ProductImage", (string)null);
+                });
+
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductRecord", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InternalCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("MaxPriceMinor")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("MinPriceMinor")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("PrimaryImageId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("PublishedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Slug")
@@ -235,11 +778,36 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("WeightGram")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("InternalCode")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Product_InternalCode")
+                        .HasFilter("\"InternalCode\" IS NOT NULL");
+
+                    b.HasIndex("PrimaryImageId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Product_PrimaryImageId");
 
                     b.HasIndex("Slug")
                         .IsUnique()
                         .HasDatabaseName("IX_Product_Slug");
+
+                    b.HasIndex("Status", "PublishedAt")
+                        .HasDatabaseName("IX_Product_Status_PublishedAt");
+
+                    b.HasIndex("Status", "MinPriceMinor", "Id")
+                        .HasDatabaseName("IX_Product_Status_MinPrice");
 
                     b.ToTable("Product", (string)null);
                 });
@@ -301,6 +869,41 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                     b.ToTable("ProductTranslation", (string)null);
                 });
 
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductVariantAxisRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AttributeDefinitionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AttributeDefinitionId");
+
+                    b.HasIndex("ProductId", "AttributeDefinitionId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_VariantAxis_Product_Def");
+
+                    b.ToTable("ProductVariantAxis", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ProductVariantAxis_SortOrder", "\"SortOrder\" BETWEEN 1 AND 3");
+                        });
+                });
+
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductVariantRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -315,10 +918,32 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                         .HasMaxLength(400)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Barcode")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("CompareAtMinor")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Currency")
                         .IsRequired()
                         .HasMaxLength(3)
                         .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("MainImageId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER");
 
                     b.Property<Guid>("ProductId")
                         .HasColumnType("TEXT");
@@ -328,17 +953,45 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("WeightGram")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("Barcode")
+                        .HasDatabaseName("IX_Variant_Barcode");
+
+                    b.HasIndex("MainImageId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Variant_MainImageId");
 
                     b.HasIndex("Sku")
                         .IsUnique()
-                        .HasDatabaseName("IX_ProductVariant_Sku");
+                        .HasDatabaseName("UX_Variant_Sku");
 
                     b.HasIndex("ProductId", "AxisSignature")
                         .IsUnique()
-                        .HasDatabaseName("IX_ProductVariant_Product_AxisSignature");
+                        .HasDatabaseName("UX_Variant_Product_AxisSignature");
 
-                    b.ToTable("ProductVariant", (string)null);
+                    b.HasIndex("ProductId", "Status", "Position")
+                        .HasDatabaseName("IX_Variant_Product_Status");
+
+                    b.ToTable("ProductVariant", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ProductVariant_AmountMinor_Positive", "\"AmountMinor\" > 0");
+
+                            t.HasCheckConstraint("CK_ProductVariant_CompareAt", "\"CompareAtMinor\" IS NULL OR \"CompareAtMinor\" >= \"AmountMinor\"");
+                        });
                 });
 
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.SessionRecord", b =>
@@ -500,8 +1153,113 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                     b.ToTable("StockLedger", (string)null);
                 });
 
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.VariantAttributeValueRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("AttributeDefinitionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("OptionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OptionId");
+
+                    b.HasIndex("AttributeDefinitionId", "OptionId")
+                        .HasDatabaseName("IX_VAV_Attr_Option");
+
+                    b.HasIndex("VariantId", "AttributeDefinitionId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_VAV_Variant_Attr");
+
+                    b.ToTable("VariantAttributeValue", (string)null);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AttributeDefinitionRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeGroupRecord", null)
+                        .WithMany()
+                        .HasForeignKey("GroupId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AttributeDefinitionTranslationRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeDefinitionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeDefinitionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AttributeOptionRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeDefinitionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AttributeOptionTranslationRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeOptionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeOptionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.AttributeSetMemberRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeDefinitionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeSetRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeSetId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.CategoryAttributeOverrideRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeDefinitionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.CategoryRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.CategoryRecord", b =>
                 {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeSetRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeSetId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("OpenStore.Infrastructure.Persistence.Records.CategoryRecord", null)
                         .WithMany()
                         .HasForeignKey("ParentId")
@@ -513,6 +1271,26 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                     b.HasOne("OpenStore.Infrastructure.Persistence.Records.CategoryRecord", null)
                         .WithMany()
                         .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductAttributeValueRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeDefinitionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeOptionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OptionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProductId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
@@ -532,6 +1310,34 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductImageRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.MediaAssetRecord", null)
+                        .WithMany()
+                        .HasForeignKey("MediaAssetId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductVariantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("VariantId")
+                        .OnDelete(DeleteBehavior.Cascade);
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductImageRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PrimaryImageId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductTranslationRecord", b =>
                 {
                     b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductRecord", null)
@@ -541,12 +1347,32 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductVariantAxisRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeDefinitionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.ProductVariantRecord", b =>
                 {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductImageRecord", null)
+                        .WithMany()
+                        .HasForeignKey("MainImageId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductRecord", "Product")
                         .WithMany("Variants")
                         .HasForeignKey("ProductId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("Product");
@@ -567,6 +1393,27 @@ namespace OpenStore.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("VariantId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("OpenStore.Infrastructure.Persistence.Records.VariantAttributeValueRecord", b =>
+                {
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeDefinitionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("AttributeDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.AttributeOptionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OptionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("OpenStore.Infrastructure.Persistence.Records.ProductVariantRecord", null)
+                        .WithMany()
+                        .HasForeignKey("VariantId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
