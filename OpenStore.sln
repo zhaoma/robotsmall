@@ -19,6 +19,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenStore.Domain.Tests", "t
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenStore.ArchitectureTests", "tests\OpenStore.ArchitectureTests\OpenStore.ArchitectureTests.csproj", "{714C8543-CC17-41C2-8A48-79F4DFE711AD}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenStore.IntegrationTests", "tests\OpenStore.IntegrationTests\OpenStore.IntegrationTests.csproj", "{2CE79E9A-DB34-4F74-ACBB-CE40F53EAAB4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -52,6 +54,10 @@ Global
 		{714C8543-CC17-41C2-8A48-79F4DFE711AD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{714C8543-CC17-41C2-8A48-79F4DFE711AD}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{714C8543-CC17-41C2-8A48-79F4DFE711AD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2CE79E9A-DB34-4F74-ACBB-CE40F53EAAB4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2CE79E9A-DB34-4F74-ACBB-CE40F53EAAB4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2CE79E9A-DB34-4F74-ACBB-CE40F53EAAB4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2CE79E9A-DB34-4F74-ACBB-CE40F53EAAB4}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{B5C439BC-3277-4714-9C77-B5F19F94D2C5} = {DD192850-72F3-45C7-A686-6B4CDEE0E580}
@@ -60,5 +66,6 @@ Global
 		{B7B2DD0F-8988-4D6D-A4E1-553E89757F05} = {DD192850-72F3-45C7-A686-6B4CDEE0E580}
 		{B58A3D98-80A5-4B20-9797-578CD9ABE72A} = {DFD6674D-F769-4C8F-819E-E6DE94B6EB43}
 		{714C8543-CC17-41C2-8A48-79F4DFE711AD} = {DFD6674D-F769-4C8F-819E-E6DE94B6EB43}
+		{2CE79E9A-DB34-4F74-ACBB-CE40F53EAAB4} = {DFD6674D-F769-4C8F-819E-E6DE94B6EB43}
 	EndGlobalSection
 EndGlobal

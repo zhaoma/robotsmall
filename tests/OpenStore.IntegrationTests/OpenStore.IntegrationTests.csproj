@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OpenStore.IntegrationTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 组合根是 Api；其余三层透过它可见。Api 里公开的 partial Program 是 WAF 的挂载点。 -->
+    <ProjectReference Include="..\..\src\OpenStore.Api\OpenStore.Api.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 夹具是 M1 判据的唯一机器样本出处。复制到输出目录，测试从 AppContext.BaseDirectory 读，
+         不在测试里另拼一份数组——两份样本一定会漂移且漂移时两边都绿。 -->
+    <None Include="..\fixtures\m1-variant-acceptance.json"
+          Link="fixtures\m1-variant-acceptance.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+  </ItemGroup>
+
+</Project>
