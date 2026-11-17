@@ -60,6 +60,9 @@ public sealed class M1SixVariantAcceptanceTests
         var created = await createResp.Content.ReadFromJsonAsync<AdminProductDetailDto>(JsonOpts);
         Assert.NotNull(created);
         Assert.Equal(6, created.Variants.Count);
+        // SKU 唯一是真契约：Product.GuardVariants 前置守卫（PRODUCT_SKU_DUPLICATE）+
+        // DB 唯一索引 UX_Variant_Sku 兜底。这里断言回显的 6 个 SKU 互不相同，
+        // 验的是这条领域+DB 不变量在真实 HTTP 链路上成立（含夹具合法性）。
         Assert.Equal(6, created.Variants.Select(v => v.Sku).Distinct().Count());
 
         // ---- ② PATCH 上架 ----
