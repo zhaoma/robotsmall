@@ -87,7 +87,10 @@ selftest() {
     # 用**非 quiet** 跑：判据编号出现在 `FAIL <code>` 行里，这是唯一能与判据一一对应的形态。
     # （quiet 模式只输出总结，编号与"失败"这个词分开在两行，grep 会漏 —— 自证自己会假绿。）
     out=$(bash "$0" --dir "$d" 2>&1); rc=$?
-    if [ "$rc" = "1" ] && printf '%s' "$out" | grep -q "FAIL ${code} "; then
+    # 不要把输出经管道喂给 `grep -q`：`grep -q` 一命中就关读端，上游还在写 → SIGPIPE，
+    # 而脚本开着 `set -o pipefail` → 整条管线判非零。于是"判据真的红了、自证却报 NOTRED"。
+    # 	here-string 只有一次读、没有上游写者，pipefail 无从发作（同一族坑见 devops-engineer 的 a9c416e）。
+    if [ "$rc" = "1" ] && grep -q "FAIL ${code} " <<< "$out"; then
       printf '  red    %-5s %s\n' "$code" "$desc"; pass=$((pass+1))
     else
       printf '  NOTRED %-5s %s（rc=%s，期望 1；输出里没有 "FAIL %s"）\n' "$code" "$desc" "$rc" "$code"
@@ -318,7 +321,7 @@ verdict "files[] 与目录内容双向一致" "$c" "$d"
 
 # ── R3 声明里的语种必须覆盖默认语种，且没有重复声明 ──────────────────────────
 begin R3; d=""; c=0
-echo "$LOCALES" | grep -qx "$DEFAULT_LOCALE" || { c=$((c+1)); d="$d locales 里没有 isDefault 的那一条（${DEFAULT_LOCALE}）"$'\n'; }
+grep -qx "$DEFAULT_LOCALE" <<< "$LOCALES" || { c=$((c+1)); d="$d locales 里没有 isDefault 的那一条（${DEFAULT_LOCALE}）"$'\n'; }
 dup=$(echo "$LOCALES" | sort | uniq -d)
 [ -z "$dup" ] || { c=$((c+1)); d="$d 语种重复声明: $(echo "$dup" | tr '\n' ' ')"$'\n'; }
 verdict "语种声明自洽（含默认语种、无重复）" "$c" "$d"
@@ -359,7 +362,7 @@ verdict "同类型内 (locale, slug) 唯一" "$c" "$d"
 begin C3; d=""; c=0
 while IFS=$'\t' read -r typ k loc slug; do
   [ -n "$k" ] || continue
-  echo "$LOCALES" | grep -qx "$loc" || { c=$((c+1)); d="$d $typ($k) 的译文行 locale=$loc 未在 locales 中声明"$'\n'; }
+  grep -qx "$loc" <<< "$LOCALES" || { c=$((c+1)); d="$d $typ($k) 的译文行 locale=$loc 未在 locales 中声明"$'\n'; }
 done < <(slug_rows)
 verdict "译文行 locale ∈ 声明语种" "$c" "$d"
 
@@ -528,7 +531,7 @@ verdict "图片文件存在且中英 alt 非空" "$c13c" "$c13d"
 for f in "$DIR"/images/*; do
   [ -f "$f" ] || continue
   b=$(basename "$f")
-  printf '%s\n' "$refs" | grep -qxF "$b" || warn "images/$b 未被任何商品引用（不会坏事，但它是残留；reset 也不会删它）"
+  grep -qxF "$b" <<< "$refs" || warn "images/$b 未被任何商品引用（不会坏事，但它是残留；reset 也不会删它）"
 done
 
 # ── C14 F5：富文本内嵌 img 必须有非空 alt，中英各查一遍 ──────────────────────
