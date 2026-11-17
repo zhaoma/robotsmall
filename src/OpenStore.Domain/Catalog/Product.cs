@@ -183,6 +183,20 @@ public sealed partial class Product
                 $"Product has duplicate variant id '{duplicateId.Key}'.");
         }
 
+        // SKU 唯一是硬契约（数据模型 §6.1 UX_Variant_Sku 唯一、不依赖 collation）。
+        // 领域层做前置守卫，给出友好错误码；DB 唯一索引兜底防并发绕过。二者职责不同，不是重复：
+        // 轴签名唯一这里也查了，SKU 属同一模式。Ordinal 与 DB 索引的字节序一致（大小写敏感，
+        // SKU 规范本身要求大写，见 ProductVariant 守卫）。
+        var duplicateSku = list
+            .GroupBy(v => v.Sku, StringComparer.Ordinal)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (duplicateSku is not null)
+        {
+            throw new InvariantViolationException(
+                "PRODUCT_SKU_DUPLICATE",
+                $"Product has duplicate variant SKU '{duplicateSku.Key}'.");
+        }
+
         return list;
     }
 

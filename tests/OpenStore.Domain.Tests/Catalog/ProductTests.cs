@@ -224,4 +224,34 @@ public sealed class ProductTests
         Should.Throw<DomainException>(() => product.UpdateVariantSku(variantId, "ts-red-m"))
             .Code.ShouldBe("INV_PRODUCT_VARIANT_SKU_INVALID");
     }
+
+    [Fact]
+    public void 重复SKU_同一商品内必须拒绝_Create路径()
+    {
+        // 两条轴签名不同（不会撞签名守卫），仅 SKU 相同 —— 用来证明 SKU 唯一是独立不变量。
+        var variants = new[]
+        {
+            new ProductVariant(Guid.NewGuid(), "TS-RED-M", "color=red|size=m", Prices(1999)),
+            new ProductVariant(Guid.NewGuid(), "TS-RED-M", "color=red|size=l", Prices(2099)),
+        };
+
+        Should.Throw<InvariantViolationException>(
+                () => Product.Create(Guid.NewGuid(), "t-shirt", "T", variants))
+            .Code.ShouldBe("INV_PRODUCT_SKU_DUPLICATE");
+    }
+
+    [Fact]
+    public void 重复SKU_同一商品内必须拒绝_Rehydrate路径()
+    {
+        // 读取侧也守：库里若出现重复 SKU 的历史脏数据，宁可炸在读取侧也不放进下单流程。
+        var variants = new[]
+        {
+            new ProductVariant(Guid.NewGuid(), "TS-RED-M", "color=red|size=m", Prices(1999)),
+            new ProductVariant(Guid.NewGuid(), "TS-RED-M", "color=red|size=l", Prices(2099)),
+        };
+
+        Should.Throw<InvariantViolationException>(
+                () => Product.Rehydrate(Guid.NewGuid(), "t-shirt", "T", ProductStatus.Draft, variants))
+            .Code.ShouldBe("INV_PRODUCT_SKU_DUPLICATE");
+    }
 }
